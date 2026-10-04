@@ -41,7 +41,7 @@ class ChartTests(unittest.TestCase):
             },
             {"/healthz"},
         )
-        self.assertEqual(container["image"], "ghcr.io/zekihan/backrestwatch:0.1.0")
+        self.assertEqual(container["image"], "ghcr.io/zekihan/backrestwatch:0.1.1")
         rules = next(d for d in docs if d["kind"] == "ClusterRole")["rules"]
         self.assertEqual(
             {r for rule in rules for r in rule["resources"]},

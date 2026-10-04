@@ -24,14 +24,14 @@ Unexpected inventory fails the aggregate check, including clusters with no repos
 
 ```sh
 helm upgrade --install backrestwatch oci://ghcr.io/zekihan/charts/backrestwatch \
-  --version 0.1.0 --namespace backup-monitoring --create-namespace \
+  --version 0.1.1 --namespace backup-monitoring --create-namespace \
   --values examples/values.yaml
 kubectl -n backup-monitoring port-forward service/backrestwatch 8080:8080
 curl -i http://localhost:8080/backups
 ```
 
-Images are published as `docker.io/zekihan/backrestwatch:0.1.0` and
-`ghcr.io/zekihan/backrestwatch:0.1.0` for Linux amd64 and arm64. The chart defaults
+Images are published as `docker.io/zekihan/backrestwatch:0.1.1` and
+`ghcr.io/zekihan/backrestwatch:0.1.1` for Linux amd64 and arm64. The chart defaults
 to GHCR and its `appVersion` image tag. Pin `image.digest` when required.
 See the [chart reference](charts/backrestwatch/README.md) for configuration.
 
@@ -156,7 +156,7 @@ creates a GitHub release with binaries, checksums and the verified chart. Only
 release jobs receive publishing credentials; PR jobs use read-only permissions.
 GoReleaser uses the validated tag as the binary version.
 
-Run `./scripts/verify_release.sh 0.1.0` to repeat the public manifest and chart
+Run `./scripts/verify_release.sh 0.1.1` to repeat the public manifest and chart
 checks. See [compatibility and provenance](docs/compatibility.md).
 
 ## licence
