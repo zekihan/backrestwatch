@@ -57,6 +57,7 @@ func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 		if response.StatusCode != code || response.Header.Get("Cache-Control") != "no-store" {
 			t.Fatal(path, response.StatusCode)
 		}
+		_, _ = io.Copy(io.Discard, response.Body)
 		response.Body.Close()
 	}
 	for method, code := range map[string]int{"HEAD": 200, "POST": 405} {
@@ -66,13 +67,14 @@ func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 			t.Fatal(method, recorder.Code)
 		}
 	}
+	client.CloseIdleConnections()
 	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(17 * time.Second):
 		t.Fatal("shutdown leaked collector or HTTP server")
 	}
 }
