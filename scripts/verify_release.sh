@@ -7,6 +7,19 @@ mkdir -p dist/verified
 # Run with fresh credentials stores to verify public access, even on an authenticated workstation.
 verify_dir=$(mktemp -d)
 trap 'rm -rf "$verify_dir"' EXIT HUP INT TERM
+# Preserve only plugin discovery paths; do not copy registry credentials.
+python3 - "$verify_dir/docker" <<'PYTHON'
+import json, os, pathlib, sys
+original = pathlib.Path(os.environ.get('DOCKER_CONFIG', pathlib.Path.home() / '.docker'))
+try:
+    config = json.loads((original / 'config.json').read_text())
+except FileNotFoundError:
+    config = {}
+destination = pathlib.Path(sys.argv[1])
+destination.mkdir()
+plugins = [str(original / 'cli-plugins'), *config.get('cliPluginsExtraDirs', [])]
+(destination / 'config.json').write_text(json.dumps({'cliPluginsExtraDirs': plugins}))
+PYTHON
 for image in docker.io/zekihan/backrestwatch ghcr.io/zekihan/backrestwatch; do
   DOCKER_CONFIG="$verify_dir/docker" docker buildx imagetools inspect "$image:$version" --raw > "$verify_dir/manifest.json"
   python3 - "$verify_dir/manifest.json" <<'PY'
