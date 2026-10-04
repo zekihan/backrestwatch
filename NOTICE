@@ -1,0 +1,11 @@
+backrestwatch
+Copyright 2026 zekihan
+
+The monitoring contract and behavioral fixtures are derived from
+charts/crunchy-postgres-operator/files/backup_monitor.py and tests/test_monitor.py
+in https://github.com/zekihan/argocd, Copyright zekihan, licensed under
+Apache License 2.0. The original Apache license is included in
+LICENSES/Apache-2.0.txt. The source revision is recorded in docs/compatibility.md.
+
+The new application is distributed under GNU Affero General Public License v3.0,
+following the standalone hornkeeper application convention. See LICENSE.

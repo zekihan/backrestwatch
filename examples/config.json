@@ -1,0 +1,16 @@
+{
+  "listenAddress": ":8080",
+  "stateFile": "/data/evidence.json",
+  "pollIntervalSeconds": 60,
+  "maxSampleAgeSeconds": 180,
+  "maxAgeSeconds": 28800,
+  "requestTimeoutSeconds": 10,
+  "collectionTimeoutSeconds": 45,
+  "clusters": [
+    {
+      "namespace": "database",
+      "name": "database",
+      "repos": {"repo1": {}, "repo2": {"maxAgeSeconds": 36000}}
+    }
+  ]
+}
