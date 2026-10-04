@@ -1,0 +1,78 @@
+nameOverride: ""
+fullnameOverride: ""
+image:
+  repository: ghcr.io/zekihan/backrestwatch
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+config:
+  pollIntervalSeconds: 60
+  maxSampleAgeSeconds: 180
+  maxAgeSeconds: 28800
+  requestTimeoutSeconds: 10
+  collectionTimeoutSeconds: 45
+  # Replace this example inventory with every PostgresCluster in your Kubernetes cluster.
+  clusters:
+    - namespace: database
+      name: database
+      repos:
+        repo1: {}
+service:
+  port: 8080
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+rbac:
+  create: true
+persistence:
+  existingClaim: ""
+  storageClass: ""
+  size: 1Gi
+  annotations:
+    helm.sh/resource-policy: keep
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+    ephemeral-storage: 16Mi
+  limits:
+    memory: 128Mi
+    ephemeral-storage: 64Mi
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 25100
+  runAsGroup: 25100
+  fsGroup: 25100
+  fsGroupChangePolicy: OnRootMismatch
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+probes:
+  startup:
+    httpGet: {path: /healthz, port: http}
+    periodSeconds: 5
+    failureThreshold: 12
+  liveness:
+    httpGet: {path: /healthz, port: http}
+    periodSeconds: 20
+  readiness:
+    httpGet: {path: /healthz, port: http}
+    periodSeconds: 10
+networkPolicy:
+  enabled: false
+  # Explicit API Service and endpoint CIDRs required when enabled; CNI DNAT behavior varies.
+  apiPeers: []
+  apiPorts: [443, 6443]
+  ingressFrom: []
+  # No DNS access is needed for the in-cluster API environment's IP address.
+  extraEgress: []
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

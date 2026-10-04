@@ -1,0 +1,9 @@
+apiVersion: v2
+name: backrestwatch
+description: Durable Crunchy PostgreSQL backup completion freshness monitoring
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/zekihan/backrestwatch
+sources:
+  - https://github.com/zekihan/backrestwatch

@@ -1,0 +1,8 @@
+config:
+  clusters:
+    - namespace: database
+      name: production
+      repos:
+        repo1: {}
+        repo2:
+          maxAgeSeconds: 36000

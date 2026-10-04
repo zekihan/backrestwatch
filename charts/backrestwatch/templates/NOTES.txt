@@ -1,0 +1,3 @@
+Monitor backup completion metadata at http://{{ include "backrestwatch.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}/backups
+Replace config.clusters with your complete inventory before installing.
+Completion freshness does not establish restorability. Retain the evidence PVC across upgrades.

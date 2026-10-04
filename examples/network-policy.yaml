@@ -1,0 +1,11 @@
+networkPolicy:
+  enabled: true
+  # Example only: replace with your API Service and endpoint CIDRs.
+  apiPeers: [10.96.0.1/32]
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: monitoring
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: gatus

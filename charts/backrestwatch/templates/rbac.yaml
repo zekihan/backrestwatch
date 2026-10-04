@@ -1,0 +1,30 @@
+{{- if .Values.rbac.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace (include "backrestwatch.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "backrestwatch.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [postgres-operator.crunchydata.com]
+    resources: [postgresclusters]
+    verbs: [list]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-%s" .Release.Namespace (include "backrestwatch.fullname" .) | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "backrestwatch.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-%s" .Release.Namespace (include "backrestwatch.fullname" .) | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "backrestwatch.serviceAccount" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
