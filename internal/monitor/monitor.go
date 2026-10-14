@@ -79,6 +79,9 @@ func (m *Monitor) Refresh(ctx context.Context) {
 		return
 	}
 	if err := m.store.Save(ledger); err != nil {
+		// A failed write must not undo an observed disappearance or destination
+		// change. Retain its safety boundary, but not newly observed successes.
+		m.ledger = retainInvalidations(m.ledger, ledger)
 		m.fail("Evidence persistence failed; check volume capacity and write permissions")
 		return
 	}
@@ -94,6 +97,21 @@ func (m *Monitor) Refresh(ctx context.Context) {
 		}
 	}
 	m.logger.InfoContext(ctx, "Kubernetes sample published", "repositories", len(results), "unhealthy", unhealthy)
+}
+
+func retainInvalidations(previous, next evidence.Ledger) evidence.Ledger {
+	pending := make(evidence.Ledger, len(next))
+	for key, entry := range next {
+		old := previous[key]
+		if !entry.LastSuccess.IsZero() && old.UID == entry.UID && old.Created.Equal(entry.Created) &&
+			old.RepositoryID == entry.RepositoryID && old.NotBefore.Equal(entry.NotBefore) {
+			entry.LastSuccess, entry.Source = old.LastSuccess, old.Source
+		} else {
+			entry.LastSuccess, entry.Source = time.Time{}, ""
+		}
+		pending[key] = entry
+	}
+	return pending
 }
 
 func (m *Monitor) fail(reason string) {

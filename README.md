@@ -103,6 +103,11 @@ This deliberately produces 503 until new evidence is observed. Older releases
 cannot read version 2, so preserve an appropriate checkpoint when rolling back.
 The process retries loading until recovery succeeds. A write failure also keeps
 backup endpoints unhealthy; check volume permissions, capacity and storage health.
+Observed destination changes and disappearances remain invalidated in memory
+across failed writes, so storage recovery cannot resurrect the old completion.
+New successes are retained only after a successful write. Pending invalidations
+cannot survive a process exit until storage accepts a checkpoint; restore write
+access before restarting whenever possible.
 
 ## configuration and operation
 
