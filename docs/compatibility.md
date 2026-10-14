@@ -41,3 +41,13 @@ images use the exact digest already pinned by those siblings. Publishing secrets
 are provisioned by the existing `terraform/git` repository module from its Doppler
 environment. Application source and chart examples contain no homelab inventory,
 addresses or operational credentials.
+
+Repository identity also reads configured S3/GCS/Azure destinations, destination
+options in `spec.backups.pgbackrest.global`, PVC binding settings, and
+`status.pgbackrest.repos[].volume`. PGO itself resets repository initialization
+when external configuration hashes or bound volumes change. Backrestwatch retains
+a local change boundary because upstream Jobs and aggregate status do not all
+carry the destination identity. After a detected change, aggregate scheduled
+status is insufficient (even Job startTime can be reset on resume); a post-boundary
+Job or newly created CronJob must establish the next success. See the README for
+migration behavior and the remaining metadata-only observability limits.

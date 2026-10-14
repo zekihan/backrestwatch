@@ -15,10 +15,12 @@ import (
 )
 
 type Entry struct {
-	UID         string    `json:"uid"`
-	Created     time.Time `json:"created"`
-	LastSuccess time.Time `json:"lastSuccess"`
-	Source      string    `json:"source"`
+	RepositoryID string    `json:"repositoryID,omitempty"`
+	NotBefore    time.Time `json:"notBefore,omitzero"`
+	UID          string    `json:"uid"`
+	Created      time.Time `json:"created"`
+	LastSuccess  time.Time `json:"lastSuccess"`
+	Source       string    `json:"source"`
 }
 
 type Ledger map[string]Entry
@@ -66,11 +68,16 @@ func (s *Store) Load() (Ledger, error) {
 	var doc document
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	if d.Decode(&doc) != nil || doc.Version != 1 || doc.Entries == nil || len(doc.Entries) > 4000 {
+	if d.Decode(&doc) != nil || (doc.Version != 1 && doc.Version != 2) || doc.Entries == nil || len(doc.Entries) > 4000 {
 		return nil, fmt.Errorf("unsupported or corrupt evidence file")
 	}
 	for key, entry := range doc.Entries {
-		if key == "" || entry.UID == "" || entry.Created.IsZero() || entry.LastSuccess.Before(entry.Created) || entry.Source == "" {
+		if doc.Version == 1 && (entry.RepositoryID != "" || !entry.NotBefore.IsZero() || entry.LastSuccess.IsZero()) {
+			return nil, fmt.Errorf("corrupt legacy completion evidence")
+		}
+		if (doc.Version == 2 && entry.RepositoryID == "") || key == "" || entry.UID == "" || entry.Created.IsZero() || (!entry.LastSuccess.IsZero() && (entry.LastSuccess.Before(entry.Created) || entry.Source == "")) ||
+			(entry.LastSuccess.IsZero() && (entry.RepositoryID == "" || entry.Source != "")) ||
+			(!entry.NotBefore.IsZero() && (entry.NotBefore.Before(entry.Created) || (!entry.LastSuccess.IsZero() && !entry.LastSuccess.After(entry.NotBefore)))) {
 			return nil, fmt.Errorf("corrupt completion evidence")
 		}
 	}
@@ -78,7 +85,7 @@ func (s *Store) Load() (Ledger, error) {
 }
 
 func (s *Store) Save(entries Ledger) error {
-	data, err := json.Marshal(document{Version: 1, Entries: entries})
+	data, err := json.Marshal(document{Version: 2, Entries: entries})
 	if err != nil {
 		return err
 	}

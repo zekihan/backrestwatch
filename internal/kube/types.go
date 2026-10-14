@@ -24,6 +24,24 @@ type Backup struct {
 	Repo           string `json:"repo"`
 	Succeeded      int    `json:"succeeded"`
 	CompletionTime string `json:"completionTime"`
+	StartTime      string `json:"startTime"`
+}
+
+// Repository contains only destination settings; schedules do not change identity.
+type Repository struct {
+	Name   string            `json:"name"`
+	S3     map[string]string `json:"s3,omitempty"`
+	GCS    map[string]string `json:"gcs,omitempty"`
+	Azure  map[string]string `json:"azure,omitempty"`
+	Volume *struct {
+		VolumeClaimSpec struct {
+			StorageClassName *string        `json:"storageClassName,omitempty"`
+			VolumeName       string         `json:"volumeName,omitempty"`
+			Selector         map[string]any `json:"selector,omitempty"`
+			DataSource       map[string]any `json:"dataSource,omitempty"`
+			DataSourceRef    map[string]any `json:"dataSourceRef,omitempty"`
+		} `json:"volumeClaimSpec"`
+	} `json:"volume,omitempty"`
 }
 
 type Cluster struct {
@@ -31,15 +49,18 @@ type Cluster struct {
 	Spec     struct {
 		Backups struct {
 			PGBackRest struct {
-				Repos []struct {
-					Name string `json:"name"`
-				} `json:"repos"`
+				Repos  []Repository      `json:"repos"`
+				Global map[string]string `json:"global"`
 			} `json:"pgbackrest"`
 		} `json:"backups"`
 	} `json:"spec"`
 	Status struct {
 		PGBackRest struct {
 			ScheduledBackups []Backup `json:"scheduledBackups"`
+			Repos            []struct {
+				Name   string `json:"name"`
+				Volume string `json:"volume"`
+			} `json:"repos"`
 		} `json:"pgbackrest"`
 	} `json:"status"`
 }

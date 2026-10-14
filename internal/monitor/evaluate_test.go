@@ -193,7 +193,7 @@ func TestJobCompletionAndRecreatedCluster(t *testing.T) {
 	cluster.Metadata.CreationTimestamp = "2026-10-02T10:30:00Z"
 	// An old Job can finish after recreation; its creation time still excludes it.
 	results, next := evaluate(t, kube.Sample{Clusters: []kube.Cluster{cluster}, Jobs: []kube.Job{testJob(t)}, CronJobs: []kube.CronJob{testCron(t)}}, old, testNow)
-	if results["db/db/repo1"].Healthy || results["db/db/repo2"].Healthy || len(next) != 0 {
+	if results["db/db/repo1"].Healthy || results["db/db/repo2"].Healthy || !next["db/db/repo1"].LastSuccess.IsZero() || !next["db/db/repo2"].LastSuccess.IsZero() {
 		t.Fatal("old cluster history reused", results)
 	}
 	job := testJob(t)
@@ -233,6 +233,10 @@ func TestMalformedSampleRejected(t *testing.T) {
 		func(c *kube.Cluster) { c.Metadata.UID = "" },
 		func(c *kube.Cluster) { c.Metadata.CreationTimestamp = "future" },
 		func(c *kube.Cluster) { c.Spec.Backups.PGBackRest.Repos[0].Name = "bad/repo" },
+		func(c *kube.Cluster) {
+			c.Spec.Backups.PGBackRest.Repos[0].S3 = map[string]string{"bucket": "s3"}
+			c.Spec.Backups.PGBackRest.Repos[0].GCS = map[string]string{"bucket": "gcs"}
+		},
 		func(c *kube.Cluster) {
 			c.Spec.Backups.PGBackRest.Repos = append(c.Spec.Backups.PGBackRest.Repos, c.Spec.Backups.PGBackRest.Repos[0])
 		},

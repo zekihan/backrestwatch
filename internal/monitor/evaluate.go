@@ -49,6 +49,15 @@ func Evaluate(c config.Config, sample kube.Sample, previous evidence.Ledger, now
 		}
 		repos := map[string]bool{}
 		for _, repo := range cluster.Spec.Backups.PGBackRest.Repos {
+			backends := 0
+			for _, present := range []bool{repo.S3 != nil, repo.GCS != nil, repo.Azure != nil, repo.Volume != nil} {
+				if present {
+					backends++
+				}
+			}
+			if backends > 1 {
+				return nil, nil, fmt.Errorf("ambiguous PostgresCluster repository destination: %s", key)
+			}
 			if !config.Repo(repo.Name) || repos[repo.Name] {
 				return nil, nil, fmt.Errorf("invalid or duplicate PostgresCluster repository: %s", key)
 			}
@@ -72,8 +81,24 @@ func Evaluate(c config.Config, sample kube.Sample, previous evidence.Ledger, now
 			result := Result{MaxAgeSeconds: maxAge}
 			if !found {
 				result.Reason = "Expected PostgresCluster is missing"
+				if old := previous[key]; old.UID != "" {
+					old.LastSuccess, old.Source = time.Time{}, ""
+					if now.After(old.NotBefore) {
+						old.NotBefore = now
+					}
+					if old.Created.After(old.NotBefore) {
+						old.NotBefore = old.Created
+					}
+					old.RepositoryID = "missing"
+					next[key] = old
+				}
 			} else if !hasRepo(cluster, repo) {
 				result.Reason = "Expected backup repository is missing"
+				boundary := now
+				if old := previous[key]; old.UID == cluster.Metadata.UID && old.NotBefore.After(boundary) {
+					boundary = old.NotBefore
+				}
+				next[key] = evidence.Entry{UID: cluster.Metadata.UID, Created: created[clusterKey], RepositoryID: "missing", NotBefore: boundary}
 			} else {
 				result, next[key] = evaluateRepository(sample, cluster, repo, created[clusterKey], previous[key], now, maxAge)
 				if next[key].UID == "" {
@@ -149,14 +174,34 @@ func jobOwned(job kube.Job, cluster kube.Cluster, repo string, crons []kube.Cron
 
 func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, created time.Time, old evidence.Entry, now time.Time, maxAge int) (Result, evidence.Entry) {
 	result := Result{MaxAgeSeconds: maxAge, ClusterUID: cluster.Metadata.UID}
-	best := evidence.Entry{}
+	identity := repositoryIdentity(cluster, repo)
+	best := evidence.Entry{UID: cluster.Metadata.UID, Created: created, RepositoryID: identity}
 	invalid := false
-	if old.UID == cluster.Metadata.UID && old.Created.Equal(created) {
-		if old.LastSuccess.Before(created) || old.LastSuccess.After(now) || old.Source == "" {
-			invalid = true
+	sameCluster := old.UID == cluster.Metadata.UID && old.Created.Equal(created)
+	if sameCluster {
+		if old.RepositoryID != identity {
+			// Keep the boundary even when no new success is available, including across
+			// restarts. Old jobs may still complete after the destination changed.
+			best.NotBefore = now
+			if old.NotBefore.After(best.NotBefore) {
+				best.NotBefore = old.NotBefore
+			}
 		} else {
-			best = old
+			best.NotBefore = old.NotBefore
+			if old.NotBefore.After(now) || (!old.LastSuccess.IsZero() && (old.LastSuccess.Before(created) || old.LastSuccess.After(now) || old.Source == "" || (!old.NotBefore.IsZero() && !old.LastSuccess.After(old.NotBefore)))) {
+				invalid = true
+			} else {
+				best = old
+			}
 		}
+	}
+	baseline := best
+	eligibleStart := func(value string) bool {
+		if best.NotBefore.IsZero() {
+			return true
+		}
+		started, err := timestamp(value, now)
+		return err == nil && started.After(best.NotBefore)
 	}
 	accept := func(value, source string) {
 		completed, err := timestamp(value, now)
@@ -164,18 +209,24 @@ func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, c
 			invalid = true
 			return
 		}
-		if completed.Before(created) {
+		if completed.Before(created) || (!best.NotBefore.IsZero() && !completed.After(best.NotBefore)) {
 			return
 		}
-		if best.UID == "" || completed.After(best.LastSuccess) {
-			best = evidence.Entry{UID: cluster.Metadata.UID, Created: created, LastSuccess: completed, Source: source}
+		if best.LastSuccess.IsZero() || completed.After(best.LastSuccess) {
+			best.LastSuccess, best.Source = completed, source
 		}
 	}
-	for _, backup := range cluster.Status.PGBackRest.ScheduledBackups {
-		if backup.Repo == repo && backup.Succeeded > 0 {
-			accept(backup.CompletionTime, "PostgresCluster scheduled-backup status")
+	// Aggregate status does not identify the Job or destination. After a change,
+	// even its startTime is insufficient: Kubernetes resets Job startTime on resume.
+	// Require Job creation or a newly created CronJob until fresh evidence is retained.
+	if best.NotBefore.IsZero() {
+		for _, backup := range cluster.Status.PGBackRest.ScheduledBackups {
+			if backup.Repo == repo && backup.Succeeded > 0 {
+				accept(backup.CompletionTime, "PostgresCluster scheduled-backup status")
+			}
 		}
 	}
+
 	for _, job := range sample.Jobs {
 		if !labelsMatch(job.Metadata, cluster, repo) || job.Status.Succeeded <= 0 || !jobOwned(job, cluster, repo, sample.CronJobs) {
 			continue
@@ -192,7 +243,7 @@ func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, c
 			invalid = true
 			continue
 		}
-		if birth.Before(created) {
+		if birth.Before(created) || !eligibleStart(job.Metadata.CreationTimestamp) {
 			continue
 		}
 		completed, err := timestamp(job.Status.CompletionTime, now)
@@ -212,7 +263,7 @@ func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, c
 			invalid = true
 			continue
 		}
-		if birth.Before(created) {
+		if birth.Before(created) || !eligibleStart(cron.Metadata.CreationTimestamp) {
 			continue
 		}
 		completed, err := timestamp(cron.Status.LastSuccessfulTime, now)
@@ -227,13 +278,10 @@ func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, c
 	}
 	if invalid {
 		result.Reason = "Invalid successful backup completion timestamp"
-		// Malformed metadata cannot replace a previously validated checkpoint.
-		if old.UID == cluster.Metadata.UID && old.Created.Equal(created) && !old.LastSuccess.After(now) && !old.LastSuccess.Before(created) {
-			return result, old
-		}
-		return result, evidence.Entry{}
+		// Keep only the current destination's validated state or change barrier.
+		return result, baseline
 	}
-	if best.UID == "" {
+	if best.LastSuccess.IsZero() {
 		result.Reason = "No successful completed backup recorded"
 		return result, best
 	}
