@@ -27,6 +27,7 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 	dir := t.TempDir()
 	var mu sync.Mutex
 	uid, token, evidencePresent, forbidden := "cluster-uid", "first", true, false
+	bucket, jobCreated, jobCompleted := "old-bucket", "", ""
 	created := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339Nano)
 	completed := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
 	api := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,9 +49,15 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 					backups = []any{map[string]any{"repo": "repo1", "succeeded": 1, "completionTime": completed}}
 				}
 				items = []any{map[string]any{"metadata": map[string]string{"namespace": "db", "name": "db", "uid": uid, "creationTimestamp": created},
-					"spec":   map[string]any{"backups": map[string]any{"pgbackrest": map[string]any{"repos": []any{map[string]string{"name": "repo1"}}}}},
+					"spec":   map[string]any{"backups": map[string]any{"pgbackrest": map[string]any{"repos": []any{map[string]any{"name": "repo1", "s3": map[string]string{"bucket": bucket, "endpoint": "s3.example.com", "region": "eu-west-1"}}}}}},
 					"status": map[string]any{"pgbackrest": map[string]any{"scheduledBackups": backups}}}}
 			}
+		}
+		if strings.HasSuffix(r.URL.Path, "/jobs") && jobCreated != "" {
+			items = []any{map[string]any{
+				"metadata": map[string]any{"namespace": "db", "name": "new-backup", "uid": "new-job", "creationTimestamp": jobCreated, "labels": map[string]string{"postgres-operator.crunchydata.com/cluster": "db", "postgres-operator.crunchydata.com/pgbackrest-repo": "repo1", "postgres-operator.crunchydata.com/pgbackrest-backup": "scheduled"}},
+				"status":   map[string]any{"succeeded": 1, "completionTime": jobCompleted, "conditions": []any{map[string]string{"type": "Complete", "status": "True"}}},
+			}}
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"metadata": metadata, "items": items})
 	}))
@@ -105,7 +112,7 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 		}
 	}
 	client := &http.Client{Timeout: time.Second}
-	wait := func(path string, code int) {
+	wait := func(path string, code int, contains ...string) {
 		t.Helper()
 		deadline := time.Now().Add(6 * time.Second)
 		for time.Now().Before(deadline) {
@@ -116,7 +123,7 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 				if strings.Contains(string(body), "private response") {
 					t.Fatal("sensitive API body leaked")
 				}
-				if response.StatusCode == code {
+				if response.StatusCode == code && (len(contains) == 0 || strings.Contains(string(body), contains[0])) {
 					return
 				}
 			}
@@ -150,6 +157,25 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	mu.Unlock()
+	wait("/backups", 200)
+	// A same-name bucket change cannot reuse either disk or retained status.
+	mu.Lock()
+	bucket, evidencePresent = "new-bucket", true
+	mu.Unlock()
+	wait("/backups", 503, "No successful completed backup recorded")
+	stop(cmd, done)
+	cmd, done = start()
+	wait("/backups", 503, "No successful completed backup recorded")
+	mu.Lock()
+	jobCreated = time.Now().UTC().Format(time.RFC3339Nano)
+	jobCompleted = jobCreated
+	mu.Unlock()
+	wait("/backups", 200)
+	stop(cmd, done)
+	mu.Lock()
+	jobCreated, evidencePresent = "", false
+	mu.Unlock()
+	cmd, done = start()
 	wait("/backups", 200)
 	mu.Lock()
 	uid = "replaced-cluster"

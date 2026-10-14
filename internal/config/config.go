@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
+	"unicode"
 )
 
 type Repository struct {
@@ -101,7 +103,8 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// UniqueJSON rejects ambiguous duplicate keys and trailing JSON documents.
+// UniqueJSON rejects case-insensitive duplicate keys and trailing JSON documents.
+// Key comparison matches encoding/json's case-insensitive struct field matching.
 func UniqueJSON(data []byte) error {
 	d := json.NewDecoder(bytes.NewReader(data))
 	var walk func() error
@@ -120,6 +123,7 @@ func UniqueJSON(data []byte) error {
 						return err
 					}
 					name, ok := key.(string)
+					name = foldKey(name)
 					if !ok || seen[name] {
 						return fmt.Errorf("duplicate or invalid object key")
 					}
@@ -149,4 +153,18 @@ func UniqueJSON(data []byte) error {
 		return fmt.Errorf("trailing JSON content")
 	}
 	return nil
+}
+
+func foldKey(key string) string {
+	return strings.Map(func(r rune) rune {
+		// Choose one representative for the entire Unicode case-folding cycle,
+		// including aliases such as the long s that simple lowercasing misses.
+		folded := r
+		for next := unicode.SimpleFold(r); next != r; next = unicode.SimpleFold(next) {
+			if next < folded {
+				folded = next
+			}
+		}
+		return folded
+	}, key)
 }

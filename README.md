@@ -52,21 +52,36 @@ matching labels and creation within the current cluster's lifetime. All object
 and completion timestamps must include a timezone and must not be in the future.
 Old objects cannot supply a completion after a cluster has been recreated.
 
+Repository identity includes the effective configured backend destination and path,
+plus PVC binding identity where available. An observed destination change or
+repository removal/reappearance discards the old success and persists a boundary,
+even if no replacement backup exists yet. Only Jobs created strictly after that
+boundary or newly created CronJobs can establish a new completion. Aggregate
+PostgresCluster status and pre-change CronJobs cannot prove which destination a
+run used, so they cannot restore health after a change; retain completed Jobs long
+enough for at least one collection. An unchanged destination retains its valid
+checkpoint across restarts, schedule edits, retention changes, and volume resizing.
+
 A failed or running attempt cannot erase a validated successful completion.
-Malformed success timestamps fail that repository closed even when an older
+Malformed eligible success timestamps fail that repository closed even when an older
 valid checkpoint exists. Missing clusters/repositories, API collection failures,
 pagination failures, and expired samples fail closed. Every repository's age is
 evaluated against its current threshold on each HTTP request.
 
 Completion freshness does **not** establish object-store readability, WAL
 completeness, decryptability, or restorability. Perform isolated restore drills
-separately. No production backup or restore resources are mutated by this service.
+separately. Metadata proves freshness only within observed destination changes:
+initial collection without a checkpoint, unseen change/revert cycles, projected
+Secret/ConfigMap changes, and configuration reconciliation races cannot establish
+the storage actually used by a backup. No production backup or restore resources
+are mutated by this service.
 
 ## durable state
 
 The checkpoint is a small versioned JSON file at `/data/evidence.json`; no
 database is needed. Each record carries the namespace/cluster/repo key, current
-PostgresCluster UID, creation time, latest success, and evidence source. Writes
+PostgresCluster UID, creation time, destination fingerprint, any observed-change
+boundary, latest success (if available), and evidence source. Writes
 use a temporary file, file sync, atomic rename, and directory sync before a sample
 is published. A process lock prevents two writers from sharing the same file.
 
@@ -78,17 +93,21 @@ The service cannot recover an unobserved completion if every upstream success
 source has disappeared before its first sample.
 
 On restart, recovered evidence becomes usable only after a fresh API sample
-confirms the current cluster UID and inventory. The checkpoint is never treated
+confirms the current cluster UID, repository destination, and inventory. The checkpoint is never treated
 as a fresh API sample. A corrupt or unsupported checkpoint remains untouched and
 returns 503 while `/healthz` stays 200. Preserve the file, restore a known valid
 copy or remove the corrupt file deliberately, then allow collection to retry.
+Version 1 checkpoints are read for migration but have no destination identity;
+the first successful sample writes version 2 and requires a new eligible backup.
+This deliberately produces 503 until new evidence is observed. Older releases
+cannot read version 2, so preserve an appropriate checkpoint when rolling back.
 The process retries loading until recovery succeeds. A write failure also keeps
 backup endpoints unhealthy; check volume permissions, capacity and storage health.
 
 ## configuration and operation
 
 Use `--config /path/config.json`; see [the portable example](examples/config.json).
-JSON rejects unknown fields, duplicate keys, trailing documents, duplicate
+JSON rejects unknown fields, case-insensitive duplicate keys, trailing documents, duplicate
 clusters, empty inventory, invalid names, and impossible timeout relationships.
 Namespace and cluster names are lowercase DNS labels up to 63 characters; Crunchy
 repositories are `repo1` through `repo4`. Configuration is loaded at startup;

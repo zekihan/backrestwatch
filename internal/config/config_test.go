@@ -43,3 +43,29 @@ func TestStrictConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigurationRejectsCaseInsensitiveDuplicates(t *testing.T) {
+	const inventory = `"clusters":[{"namespace":"db","name":"db","repos":{"repo1":{}}}]`
+	for name, data := range map[string]string{
+		"top-level override":   `{"maxAgeSeconds":3600,"MaxAgeSeconds":7200,` + inventory + `}`,
+		"reversed override":    `{"MaxAgeSeconds":7200,"maxAgeSeconds":3600,` + inventory + `}`,
+		"two aliases":          `{"MAXAGESECONDS":3600,"MaxAgeSeconds":7200,` + inventory + `}`,
+		"escaped alias":        `{"maxAgeSeconds":3600,"\u004daxAgeSeconds":7200,` + inventory + `}`,
+		"Unicode alias":        `{"maxAgeSeconds":3600,"maxAge\u017Feconds":7200,` + inventory + `}`,
+		"cluster inventory":    `{` + inventory + `,"Clusters":[{"namespace":"other","name":"db","repos":{"repo1":{}}}]}`,
+		"cluster namespace":    `{"clusters":[{"namespace":"db","Namespace":"other","name":"db","repos":{"repo1":{}}}]}`,
+		"cluster name":         `{"clusters":[{"namespace":"db","name":"db","Name":"other","repos":{"repo1":{}}}]}`,
+		"repository inventory": `{"clusters":[{"namespace":"db","name":"db","repos":{"repo1":{}},"Repos":{"repo2":{}}}]}`,
+		"repository override":  `{"clusters":[{"namespace":"db","name":"db","repos":{"repo1":{"maxAgeSeconds":3600,"MaxAgeSeconds":7200}}}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.json")
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("case-insensitive duplicate accepted", data)
+			}
+		})
+	}
+}

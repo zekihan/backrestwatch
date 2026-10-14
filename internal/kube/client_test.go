@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -166,5 +167,62 @@ func TestInvalidClientConfiguration(t *testing.T) {
 		if _, err := New(origin, "token", "ca", "test", time.Second); err == nil {
 			t.Fatal(origin)
 		}
+	}
+}
+
+func TestCollectionRetriesBodyReadFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		failures  int32
+		wantCalls int32
+		wantError bool
+	}{
+		{name: "recovers", failures: 1, wantCalls: 4},
+		{name: "exhausts retry budget", failures: 3, wantCalls: 3, wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			client, _ := tlsClient(t, func(w http.ResponseWriter, _ *http.Request) {
+				if calls.Add(1) <= tc.failures {
+					w.Header().Set("Content-Length", "1024")
+					_, _ = w.Write([]byte(`{"metadata":{"sensitive-secret-body":`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"metadata":{"resourceVersion":"1"},"items":[]}`))
+			})
+			sample, err := client.Collect(t.Context())
+			if (err != nil) != tc.wantError || calls.Load() != tc.wantCalls {
+				t.Fatalf("calls=%d, sample=%+v, error=%v", calls.Load(), sample, err)
+			}
+			if err != nil && (len(sample.Clusters) != 0 || len(sample.Jobs) != 0 || len(sample.CronJobs) != 0 || strings.Contains(err.Error(), "sensitive")) {
+				t.Fatal("failed response leaked into sample or diagnostics", sample, err)
+			}
+		})
+	}
+}
+
+func TestOversizedPageIsNotRetried(t *testing.T) {
+	var calls atomic.Int32
+	body := strings.Repeat(" ", 16*1024*1024+1)
+	client, _ := tlsClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		_, _ = w.Write([]byte(body))
+	})
+	if _, err := client.Collect(t.Context()); err == nil || calls.Load() != 1 {
+		t.Fatal("oversized response was accepted or retried", calls.Load(), err)
+	}
+}
+
+func TestCanceledBodyReadIsNotRetried(t *testing.T) {
+	client, _ := tlsClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"metadata":`))
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	data, retry, err := client.request(ctx, "/apis/"+ClusterAPI+"/postgresclusters", url.Values{})
+	if err == nil || retry || data != nil {
+		t.Fatal("canceled response was accepted or marked retryable", data, retry, err)
 	}
 }
