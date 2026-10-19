@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,26 @@ type blockedAPI struct{ started chan struct{} }
 func (a blockedAPI) Collect(ctx context.Context) (kube.Sample, error) {
 	close(a.started)
 	<-ctx.Done()
+	return kube.Sample{}, ctx.Err()
+}
+
+type blockedPersistence struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (p blockedPersistence) Load() (evidence.Ledger, error) {
+	close(p.started)
+	<-p.release
+	return evidence.Ledger{}, nil
+}
+
+func (blockedPersistence) Save(evidence.Ledger) error { return nil }
+
+type observingAPI struct{ called chan struct{} }
+
+func (a observingAPI) Collect(ctx context.Context) (kube.Sample, error) {
+	close(a.called)
 	return kube.Sample{}, ctx.Err()
 }
 
@@ -76,5 +98,47 @@ func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 		}
 	case <-time.After(17 * time.Second):
 		t.Fatal("shutdown leaked collector or HTTP server")
+	}
+}
+
+func TestServeBoundsWaitForBlockedPersistence(t *testing.T) {
+	var releaseOnce sync.Once
+	release := make(chan struct{})
+	letPersistenceFinish := func() { releaseOnce.Do(func() { close(release) }) }
+	defer letPersistenceFinish()
+	store := blockedPersistence{started: make(chan struct{}), release: release}
+	api := observingAPI{called: make(chan struct{})}
+	m := monitor.New(config.Default(), api, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- serve(ctx, listener, m, 50*time.Millisecond) }()
+
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("persistence Load did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("serve error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serve did not return by its shutdown deadline")
+	}
+
+	// Releasing the persistence call lets the otherwise uninterruptible monitor
+	// goroutine finish after Serve has returned.
+	letPersistenceFinish()
+	select {
+	case <-api.called:
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not continue after persistence was released")
 	}
 }

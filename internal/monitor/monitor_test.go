@@ -79,11 +79,13 @@ func TestCachedAgeAndSampleExpire(t *testing.T) {
 	m, store := newTestMonitor(t, api, filepath.Join(t.TempDir(), "evidence.json"))
 	defer store.Close()
 	results, _ := evaluate(t, kube.Sample{Clusters: []kube.Cluster{testCluster(t)}}, nil, testNow.Add(3599*time.Second))
-	m.results, m.sampled, m.error = results, time.Now(), ""
+	anchor := time.Now()
+	m.results, m.sampled, m.evaluated, m.error = results, anchor, anchor, ""
 	if code, _ := m.Report("db/db/repo1", m.sampled.Add(2*time.Second)); code != 503 {
 		t.Fatal("cached success stayed green", code)
 	}
-	if code, payload := m.Report("db/db/repo2", m.sampled.Add(2*time.Second)); code != 200 || *payload.(Result).AgeSeconds != 8*3600+1 {
+	reportAt := m.sampled.Add(2 * time.Second)
+	if code, payload := m.Report("db/db/repo2", reportAt); code != 200 || *payload.(Result).AgeSeconds != 8*3600+1 {
 		t.Fatal("age must update on every report", code, payload)
 	}
 	if code, _ := m.Report("", m.sampled.Add(181*time.Second)); code != 503 {
@@ -94,6 +96,53 @@ func TestCachedAgeAndSampleExpire(t *testing.T) {
 	}
 	if code, _ := m.Report("", m.sampled.Add(-time.Second)); code != 503 {
 		t.Fatal("negative sample elapsed accepted")
+	}
+}
+
+type delayedAPI struct {
+	sample   kube.Sample
+	started  chan struct{}
+	release  chan struct{}
+	returned time.Time
+}
+
+func (d *delayedAPI) Collect(context.Context) (kube.Sample, error) {
+	close(d.started)
+	<-d.release
+	d.returned = time.Now()
+	return d.sample, nil
+}
+
+func TestSampleTimeStartsBeforeCollectionWithoutDoubleCountingAge(t *testing.T) {
+	cluster := testCluster(t)
+	now := time.Now().UTC()
+	cluster.Metadata.CreationTimestamp = now.Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	for i := range cluster.Status.PGBackRest.ScheduledBackups {
+		cluster.Status.PGBackRest.ScheduledBackups[i].CompletionTime = now.Add(-time.Hour).Format(time.RFC3339Nano)
+	}
+	api := &delayedAPI{
+		sample:  kube.Sample{Clusters: []kube.Cluster{cluster}},
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
+	m, store := newTestMonitor(t, &fakeAPI{}, filepath.Join(t.TempDir(), "evidence.json"))
+	defer store.Close()
+	m.api = api
+	done := make(chan struct{})
+	go func() { m.Refresh(t.Context()); close(done) }()
+	<-api.started
+	time.Sleep(75 * time.Millisecond)
+	close(api.release)
+	<-done
+	if !m.sampled.Before(api.returned) || !m.evaluated.After(api.returned) || m.evaluated.Sub(m.sampled) < 50*time.Millisecond {
+		t.Fatal("sample timestamp did not include collection time", m.sampled, api.returned, m.evaluated)
+	}
+	baseAge := *m.results["db/db/repo1"].AgeSeconds
+	if code, payload := m.Report("db/db/repo1", m.evaluated); code != 200 || *payload.(Result).AgeSeconds != baseAge {
+		t.Fatal("collection time was counted twice in cached backup age", code, payload, baseAge)
+	}
+	expiredSample := m.sampled.Add(time.Duration(m.config.MaxSampleAgeSeconds)*time.Second + time.Second)
+	if code, _ := m.Report("", expiredSample); code != 503 {
+		t.Fatal("collection time was excluded from sample lifetime", code)
 	}
 }
 

@@ -26,7 +26,7 @@ config:
 | `resources` | 10m / 32Mi requests; 128Mi memory limit; no CPU limit |
 | `service.port` | 8080; container port remains 8080 |
 | `serviceAccount.create`, `name`, `annotations` | create a dedicated account; name required when creation disabled |
-| `rbac.create` | list-only ClusterRole and binding on postgresclusters, jobs, cronjobs |
+| `rbac.create` | list-only ClusterRole and binding on postgresclusters, jobs, cronjobs; names include a stable hash to avoid cross-namespace collisions |
 | `persistence.existingClaim` | reuse a claim; otherwise create a retained 1Gi ReadWriteOnce PVC |
 | `persistence.storageClass`, `size`, `annotations` | use default StorageClass when empty; default keep annotation |
 | `podSecurityContext`, `securityContext` | non-root uid/gid 25100, fsGroup 25100, RuntimeDefault seccomp, read-only root filesystem, drop all capabilities |

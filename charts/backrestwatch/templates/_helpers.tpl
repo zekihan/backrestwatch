@@ -4,6 +4,11 @@
 {{- define "backrestwatch.fullname" -}}
 {{- default .Release.Name .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+{{- define "backrestwatch.clusterRoleName" -}}
+{{- $identity := toJson (list .Release.Namespace (include "backrestwatch.fullname" .)) -}}
+{{- $prefix := printf "%s-%s" .Release.Namespace (include "backrestwatch.fullname" .) | trunc 46 | trimSuffix "-" -}}
+{{- printf "%s-%s" $prefix (sha256sum $identity | trunc 16) -}}
+{{- end -}}
 {{- define "backrestwatch.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "backrestwatch.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

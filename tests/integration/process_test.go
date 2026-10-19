@@ -76,7 +76,7 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	config := map[string]any{"listenAddress": address, "stateFile": filepath.Join(dir, "evidence.json"), "pollIntervalSeconds": 1, "maxSampleAgeSeconds": 5, "requestTimeoutSeconds": 1, "collectionTimeoutSeconds": 3,
+	config := map[string]any{"listenAddress": address, "stateFile": filepath.Join(dir, "evidence.json"), "pollIntervalSeconds": 1, "maxSampleAgeSeconds": 8, "requestTimeoutSeconds": 1, "collectionTimeoutSeconds": 3,
 		"clusters": []any{map[string]any{"namespace": "db", "name": "db", "repos": map[string]any{"repo1": map[string]any{}}}}}
 	data, err := json.Marshal(config)
 	if err != nil {

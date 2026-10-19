@@ -218,3 +218,67 @@ func TestMissingClusterClockRollbackKeepsCheckpointLoadable(t *testing.T) {
 		t.Fatal("rollback corrupted checkpoint", err)
 	}
 }
+
+func TestClockRollbackPreservesSuccessAcrossRestart(t *testing.T) {
+	for _, withBoundary := range []bool{false, true} {
+		name := "completion in future"
+		if withBoundary {
+			name = "boundary and completion in future"
+		}
+		t.Run(name, func(t *testing.T) {
+			sample := kube.Sample{Clusters: []kube.Cluster{testCluster(t)}, Jobs: []kube.Job{testJob(t)}}
+			_, ledger := evaluate(t, sample, nil, testNow)
+			const key = "db/db/repo1"
+			want := ledger[key]
+			if withBoundary {
+				want.NotBefore = want.LastSuccess.Add(-time.Minute)
+				ledger[key] = want
+			}
+			// Kubernetes has already cleaned up all sources of this completion.
+			sample.Jobs = nil
+			sample.Clusters[0].Status.PGBackRest.ScheduledBackups = nil
+			rollback := want.LastSuccess.Add(-2 * time.Minute)
+			for range 2 {
+				results, next := evaluate(t, sample, ledger, rollback)
+				if results[key].Healthy || next[key] != want {
+					t.Fatal("rollback must fail closed without losing retained evidence", results[key], next[key])
+				}
+				ledger = next
+			}
+			path := filepath.Join(t.TempDir(), "evidence.json")
+			store, err := evidence.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Save(ledger); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = evidence.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			recovered, err := store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			results, recovered := evaluate(t, sample, recovered, rollback)
+			if results[key].Healthy || recovered[key] != want {
+				t.Fatal("restart during rollback lost evidence or reported healthy", results[key])
+			}
+			results, recovered = evaluate(t, sample, recovered, testNow)
+			if !results[key].Healthy || recovered[key] != want {
+				t.Fatal("clock recovery did not restore retained success", results[key])
+			}
+			// A changed destination still invalidates evidence during rollback.
+			changeDestination(&sample.Clusters[0])
+			results, changed := evaluate(t, sample, recovered, rollback)
+			if results[key].Healthy || !changed[key].LastSuccess.IsZero() {
+				t.Fatal("rollback preserved evidence for a changed destination", results[key], changed[key])
+			}
+		})
+	}
+}

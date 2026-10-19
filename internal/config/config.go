@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -68,8 +69,13 @@ func Name(s string) bool { return len(s) <= 63 && dnsLabel.MatchString(s) }
 func Repo(s string) bool { return repoName.MatchString(s) }
 
 func (c Config) Validate() error {
-	if _, _, err := net.SplitHostPort(c.ListenAddress); err != nil {
-		return fmt.Errorf("listenAddress must be host:port")
+	_, port, err := net.SplitHostPort(c.ListenAddress)
+	if err != nil {
+		return fmt.Errorf("listenAddress must be host:port with a valid port")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || strings.Trim(port, "0123456789") != "" || portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("listenAddress port must be between 1 and 65535")
 	}
 	if !filepath.IsAbs(c.StateFile) || filepath.Base(c.StateFile) == "." {
 		return fmt.Errorf("stateFile must be an absolute file path")
@@ -81,8 +87,8 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must be between 1 and 31622400", name)
 		}
 	}
-	if c.RequestTimeoutSeconds > c.CollectionTimeoutSeconds || c.CollectionTimeoutSeconds >= c.MaxSampleAgeSeconds || c.PollIntervalSeconds >= c.MaxSampleAgeSeconds {
-		return fmt.Errorf("request timeout must fit collection timeout; poll and collection intervals must be shorter than sample lifetime")
+	if c.RequestTimeoutSeconds > c.CollectionTimeoutSeconds || c.PollIntervalSeconds+2*c.CollectionTimeoutSeconds >= c.MaxSampleAgeSeconds {
+		return fmt.Errorf("request timeout must fit collection timeout; poll interval plus two collection timeouts must be shorter than sample lifetime")
 	}
 	if len(c.Clusters) == 0 || len(c.Clusters) > 1000 {
 		return fmt.Errorf("clusters must contain an explicit inventory of 1 to 1000 clusters")

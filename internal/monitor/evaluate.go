@@ -118,6 +118,55 @@ func Evaluate(c config.Config, sample kube.Sample, previous evidence.Ledger, now
 			}
 		}
 	}
+	// Keep a tombstone for repositories removed from configured inventory. An
+	// aggregate status can outlive the inventory change, so its old success must
+	// not become eligible again if the repository is later re-added.
+	for key, old := range previous {
+		if _, present := next[key]; present {
+			continue
+		}
+		parts := strings.Split(key, "/")
+		if len(parts) != 3 || !config.Name(parts[0]) || !config.Name(parts[1]) || !config.Repo(parts[2]) {
+			continue
+		}
+		clusterKey, repo := parts[0]+"/"+parts[1], parts[2]
+		entry := old
+		entry.LastSuccess, entry.Source = time.Time{}, ""
+		cluster, found := clusters[clusterKey]
+		if found {
+			birth := created[clusterKey]
+			identity := "missing"
+			if hasRepo(cluster, repo) {
+				identity = repositoryIdentity(cluster, repo)
+			}
+			if old.UID != cluster.Metadata.UID || !old.Created.Equal(birth) || old.RepositoryID != identity ||
+				!old.LastSuccess.IsZero() || old.NotBefore.IsZero() {
+				if now.After(entry.NotBefore) {
+					entry.NotBefore = now
+				}
+			}
+			if birth.After(entry.NotBefore) {
+				entry.NotBefore = birth
+			}
+			entry.UID, entry.Created, entry.RepositoryID = cluster.Metadata.UID, birth, identity
+		} else {
+			// Treat an absent cluster as an unknown destination. Reappearance
+			// then advances the barrier even if UID and backend later match again.
+			entry.RepositoryID = "missing"
+			if now.After(entry.NotBefore) {
+				entry.NotBefore = now
+			}
+			if entry.Created.After(entry.NotBefore) {
+				entry.NotBefore = entry.Created
+			}
+		}
+		next[key] = entry
+	}
+	// The evidence store refuses checkpoints larger than 4,000 entries. Fail
+	// closed before Save so we never write a checkpoint that cannot be loaded.
+	if len(next) > 4000 {
+		return results, next, fmt.Errorf("evidence ledger exceeds the 4000-entry limit")
+	}
 	return results, next, nil
 }
 
@@ -188,10 +237,13 @@ func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, c
 			}
 		} else {
 			best.NotBefore = old.NotBefore
-			if old.NotBefore.After(now) || (!old.LastSuccess.IsZero() && (old.LastSuccess.Before(created) || old.LastSuccess.After(now) || old.Source == "" || (!old.NotBefore.IsZero() && !old.LastSuccess.After(old.NotBefore)))) {
+			if !old.LastSuccess.IsZero() && (old.LastSuccess.Before(created) || old.Source == "" || (!old.NotBefore.IsZero() && !old.LastSuccess.After(old.NotBefore))) {
 				invalid = true
 			} else {
 				best = old
+				// A clock rollback makes retained evidence temporarily unusable,
+				// but must not erase it from the next durable checkpoint.
+				invalid = old.NotBefore.After(now) || old.LastSuccess.After(now)
 			}
 		}
 	}

@@ -103,6 +103,16 @@ This deliberately produces 503 until new evidence is observed. Older releases
 cannot read version 2, so preserve an appropriate checkpoint when rolling back.
 The process retries loading until recovery succeeds. A write failure also keeps
 backup endpoints unhealthy; check volume permissions, capacity and storage health.
+If a clock rollback puts a retained completion or safety boundary in the future,
+the repository stays unhealthy while preserving that evidence across restarts.
+Once the clock catches up, the usual freshness checks apply again.
+Removing a repository from the configured inventory retains a safety record and
+clears its saved success. Re-adding it requires eligible evidence after that
+record's boundary; old aggregate status cannot restore health. These records
+count toward the checkpoint's 4,000-repository limit. Exceeding the limit fails
+closed without dropping records or replacing the checkpoint. Retiring old records
+requires deliberate checkpoint maintenance; preserve a copy before removing any
+history, since removal discards its protection against stale evidence.
 Observed destination changes and disappearances remain invalidated in memory
 across failed writes, so storage recovery cannot resurrect the old completion.
 New successes are retained only after a successful write. Pending invalidations
@@ -129,9 +139,14 @@ Helm config changes trigger a rollout.
 | `listenAddress` | `:8080` | HTTP bind address |
 | `stateFile` | `/data/evidence.json` | absolute checkpoint file path |
 
-Poll and collection intervals must be shorter than sample lifetime. Request
-timeouts must fit within collection timeout. All non-override intervals must be
-positive. One list has a 100-page / 20,000-item budget and each page a 16 MiB
+Sample age starts when collection begins. Backup age remains measured from the
+successful completion time, without counting collection duration twice.
+
+The poll interval plus two collection timeouts must be shorter than sample
+lifetime, leaving room for the next collection to finish before the current
+sample expires. Request timeouts must fit within collection timeout. The listen
+port must be numeric and between 1 and 65535. All non-override intervals must
+be positive. One list has a 100-page / 20,000-item budget and each page a 16 MiB
 budget. Exceeding a budget rejects the whole sample. Repeated continuation tokens
 or a changed list resource version also reject the sample.
 

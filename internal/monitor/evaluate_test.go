@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"encoding/json"
+	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -101,6 +103,67 @@ func TestFreshnessOverrideAndInventory(t *testing.T) {
 	results, _ = evaluate(t, kube.Sample{Clusters: []kube.Cluster{other}}, nil, testNow)
 	if results["other/other/inventory"].Reason == "" {
 		t.Fatal(results)
+	}
+}
+
+func TestInventoryRemovalRetainsDestinationBarrier(t *testing.T) {
+	cluster := testCluster(t)
+	_, prior := evaluate(t, kube.Sample{Clusters: []kube.Cluster{cluster}}, nil, testNow)
+	oldSuccess := prior["db/db/repo1"].LastSuccess
+	withoutInventory := testConfig()
+	withoutInventory.Clusters = nil
+	cluster.Spec.Backups.PGBackRest.Global = map[string]string{"repo1-path": "/changed"}
+	_, removed, err := Evaluate(withoutInventory, kube.Sample{Clusters: []kube.Cluster{cluster}}, prior, testNow.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := removed["db/db/repo1"]
+	if !entry.LastSuccess.IsZero() || !entry.NotBefore.Equal(testNow.Add(time.Hour)) || entry.RepositoryID == prior["db/db/repo1"].RepositoryID {
+		t.Fatal("removed inventory did not retain a destination-change barrier", entry)
+	}
+	store, err := evidence.Open(filepath.Join(t.TempDir(), "evidence.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Save(removed); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := store.Load()
+	if err != nil || persisted["db/db/repo1"] != entry {
+		t.Fatal("inventory tombstone did not survive checkpoint recovery", persisted, err)
+	}
+	removed = persisted
+	// A later observed change must survive a clock rollback and a destination
+	// revert while the repository remains outside configured inventory.
+	cluster.Spec.Backups.PGBackRest.Global = nil
+	_, reverted, err := Evaluate(withoutInventory, kube.Sample{Clusters: []kube.Cluster{cluster}}, removed, testNow.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reverted["db/db/repo1"].NotBefore; !got.Equal(testNow.Add(time.Hour)) {
+		t.Fatal("destination barrier moved backwards", got)
+	}
+	cluster = testCluster(t)
+	results, readded, err := Evaluate(testConfig(), kube.Sample{Clusters: []kube.Cluster{cluster}}, reverted, testNow.Add(2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results["db/db/repo1"].Healthy || readded["db/db/repo1"].LastSuccess.Equal(oldSuccess) {
+		t.Fatal("re-added inventory reused an old aggregate success", results, readded)
+	}
+}
+
+func TestLedgerLimitFailsClosedWithoutDroppingTombstones(t *testing.T) {
+	previous := make(evidence.Ledger, 4000)
+	created := testNow.Add(-24 * time.Hour)
+	for i := range 4000 {
+		previous[fmt.Sprintf("n%d/c/repo1", i)] = evidence.Entry{UID: "uid", Created: created, RepositoryID: "missing"}
+	}
+	cluster := testCluster(t)
+	_, next, err := Evaluate(testConfig(), kube.Sample{Clusters: []kube.Cluster{cluster}}, previous, testNow)
+	if err == nil || len(next) <= 4000 {
+		t.Fatal("oversized ledger was accepted or tombstones were discarded", len(next), err)
 	}
 }
 

@@ -32,8 +32,14 @@ func TestStrictConfiguration(t *testing.T) {
 		func(c *Config) { c.Clusters = append(c.Clusters, c.Clusters[0]) },
 		func(c *Config) { c.RequestTimeoutSeconds = 0 },
 		func(c *Config) { c.PollIntervalSeconds = c.MaxSampleAgeSeconds },
+		func(c *Config) { c.PollIntervalSeconds = 90; c.CollectionTimeoutSeconds = 45 },
 		func(c *Config) { c.RequestTimeoutSeconds = c.CollectionTimeoutSeconds + 1 },
 		func(c *Config) { c.ListenAddress = "invalid" },
+		func(c *Config) { c.ListenAddress = ":99999" },
+		func(c *Config) { c.ListenAddress = ":0" },
+		func(c *Config) { c.ListenAddress = ":abc" },
+		func(c *Config) { c.ListenAddress = ":" },
+		func(c *Config) { c.ListenAddress = ":+8080" },
 		func(c *Config) { c.StateFile = "relative.json" },
 	} {
 		candidate := c
@@ -41,6 +47,18 @@ func TestStrictConfiguration(t *testing.T) {
 		if candidate.Validate() == nil {
 			t.Fatal(candidate)
 		}
+	}
+}
+
+func TestConfigurationAllowsTimingBudgetBelowSampleAge(t *testing.T) {
+	c := Default()
+	c.PollIntervalSeconds = 89
+	c.CollectionTimeoutSeconds = 45
+	c.RequestTimeoutSeconds = 10
+	c.MaxSampleAgeSeconds = 180
+	c.Clusters = []Cluster{{Namespace: "db", Name: "db", Repos: map[string]Repository{"repo1": {}}}}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }
 

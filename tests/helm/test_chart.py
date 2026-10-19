@@ -12,9 +12,9 @@ CHART = ROOT / "charts/backrestwatch"
 HELM = os.environ.get("HELM", "helm")
 
 
-def render(*args):
+def render(*args, release="watch", namespace="monitoring"):
     result = subprocess.run(
-        [HELM, "template", "watch", str(CHART), "-n", "monitoring", *args],
+        [HELM, "template", release, str(CHART), "-n", namespace, *args],
         check=True,
         text=True,
         capture_output=True,
@@ -108,6 +108,32 @@ class ChartTests(unittest.TestCase):
             pod["volumes"][1]["persistentVolumeClaim"]["claimName"], "retained"
         )
         self.assertTrue(pod["containers"][0]["image"].endswith("@" + digest))
+
+    def test_cluster_rbac_names_are_collision_resistant(self):
+        first = render(release="c", namespace="a-b")
+        second = render(release="b-c", namespace="a")
+        first_role = next(d for d in first if d["kind"] == "ClusterRole")
+        second_role = next(d for d in second if d["kind"] == "ClusterRole")
+        self.assertNotEqual(first_role["metadata"]["name"], second_role["metadata"]["name"])
+
+        for docs in (first, second):
+            role = next(d for d in docs if d["kind"] == "ClusterRole")
+            binding = next(d for d in docs if d["kind"] == "ClusterRoleBinding")
+            self.assertEqual(role["metadata"]["name"], binding["metadata"]["name"])
+            self.assertEqual(role["metadata"]["name"], binding["roleRef"]["name"])
+            self.assertLessEqual(len(role["metadata"]["name"]), 63)
+
+        long_override_a = "a" * 62 + "b"
+        long_override_b = "a" * 62 + "c"
+        long_a = next(
+            d for d in render("--set", f"fullnameOverride={long_override_a}")
+            if d["kind"] == "ClusterRole"
+        )
+        long_b = next(
+            d for d in render("--set", f"fullnameOverride={long_override_b}")
+            if d["kind"] == "ClusterRole"
+        )
+        self.assertNotEqual(long_a["metadata"]["name"], long_b["metadata"]["name"])
 
     def test_network_policy_and_invalid_inventory(self):
         docs = render("-f", str(ROOT / "examples/network-policy.yaml"))

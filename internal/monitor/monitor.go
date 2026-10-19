@@ -40,6 +40,7 @@ type Monitor struct {
 	ledger    evidence.Ledger
 	loaded    bool
 	sampled   time.Time
+	evaluated time.Time
 	results   map[string]Result
 	error     string
 }
@@ -61,6 +62,7 @@ func (m *Monitor) Refresh(ctx context.Context) {
 		}
 		m.ledger, m.loaded = ledger, true
 	}
+	sampledAt := time.Now()
 	sample, err := m.api.Collect(ctx)
 	if err != nil {
 		// Collector errors may carry sensitive HTTP bodies from an alternate implementation.
@@ -72,9 +74,12 @@ func (m *Monitor) Refresh(ctx context.Context) {
 		m.fail(reason)
 		return
 	}
-	now := time.Now()
-	results, ledger, err := Evaluate(m.config, sample, m.ledger, now)
+	evaluatedAt := time.Now()
+	results, ledger, err := Evaluate(m.config, sample, m.ledger, evaluatedAt)
 	if err != nil {
+		if ledger != nil {
+			m.ledger = retainInvalidations(m.ledger, ledger)
+		}
 		m.fail("Kubernetes sample rejected: " + err.Error())
 		return
 	}
@@ -87,7 +92,7 @@ func (m *Monitor) Refresh(ctx context.Context) {
 	}
 	m.ledger = ledger
 	m.mu.Lock()
-	m.results, m.sampled, m.error = results, now, ""
+	m.results, m.sampled, m.evaluated, m.error = results, sampledAt, evaluatedAt, ""
 	m.mu.Unlock()
 	unhealthy := 0
 	for key, result := range results {
@@ -157,6 +162,10 @@ func (m *Monitor) Report(key string, now time.Time) (int, any) {
 		report.SampledAt = nil
 	}
 	elapsed := now.Sub(m.sampled).Seconds()
+	ageElapsed := now.Sub(m.evaluated).Seconds()
+	if ageElapsed < 0 {
+		ageElapsed = 0
+	}
 	if m.error != "" {
 		report.Reason = m.error
 	} else if m.sampled.IsZero() || elapsed < 0 || elapsed > float64(m.config.MaxSampleAgeSeconds) {
@@ -165,7 +174,7 @@ func (m *Monitor) Report(key string, now time.Time) (int, any) {
 	results := make(map[string]Result, len(m.results))
 	for name, result := range m.results {
 		if result.AgeSeconds != nil {
-			age := *result.AgeSeconds + max(0, elapsed)
+			age := *result.AgeSeconds + ageElapsed
 			result.AgeSeconds = &age
 			if result.Healthy && age > float64(result.MaxAgeSeconds) {
 				result.Healthy, result.Reason = false, "Last successful backup exceeds maximum age"

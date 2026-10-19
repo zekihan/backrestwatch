@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -43,6 +44,10 @@ func Handler(m *monitor.Monitor) http.Handler {
 
 // Serve owns both goroutines and drains HTTP before returning on cancellation.
 func Serve(ctx context.Context, listener net.Listener, m *monitor.Monitor) error {
+	return serve(ctx, listener, m, 15*time.Second)
+}
+
+func serve(ctx context.Context, listener net.Listener, m *monitor.Monitor, shutdownTimeout time.Duration) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	server := &http.Server{Handler: Handler(m), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
@@ -57,15 +62,19 @@ func Serve(ctx context.Context, listener net.Listener, m *monitor.Monitor) error
 	case err = <-serveDone:
 	}
 	cancel()
-	drainCtx, drainCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer drainCancel()
+	if errors.Is(err, http.ErrServerClosed) {
+		err = nil
+	}
 	if shutdownErr := server.Shutdown(drainCtx); shutdownErr != nil {
 		_ = server.Close()
 		err = errors.Join(err, shutdownErr)
 	}
-	<-pollDone
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
+	select {
+	case <-pollDone:
+	case <-drainCtx.Done():
+		err = errors.Join(err, fmt.Errorf("wait for polling goroutine: %w", drainCtx.Err()))
 	}
 	return err
 }
