@@ -15,6 +15,7 @@ lint:
 	golangci-lint run --build-tags=integration
 test:
 	$(GO) test -count=1 ./...
+	$(PYTHON) -m unittest discover -s tests/maintenance
 test/race:
 	$(GO) test -race -count=1 ./...
 test/integration: build
@@ -24,7 +25,7 @@ audit: lint test test/race test/integration
 container-test:
 	./scripts/container_smoke.sh
 chart-test: build
-	$(HELM) lint --strict charts/backrestwatch
+	$(HELM) lint --strict charts/backrestwatch --set accessControl.existingSecret=chart-validation-only
 	HELM=$(HELM) $(PYTHON) tests/helm/test_chart.py
 chart-package: chart-test
 	mkdir -p dist/charts

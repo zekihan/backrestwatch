@@ -51,3 +51,16 @@ carry the destination identity. After a detected change, aggregate scheduled
 status is insufficient (even Job startTime can be reset on resume); a post-boundary
 Job or newly created CronJob must establish the next success. See the README for
 migration behavior and the remaining metadata-only observability limits.
+
+## Security compatibility changes
+
+Unsigned Job/CronJob metadata and ownerless Jobs no longer establish successes.
+Configured Ed25519 public keys permit independently attested objects; see
+[evidence authentication](evidence-attestation.md) for the exact protocol and
+issuer decision. Legacy unsigned checkpoint successes are invalidated with a new
+boundary. Protected PostgresCluster status remains eligible on initial collection
+only, subject to existing destination-observability limits. Endpoint callers now
+need a file-backed bearer credential; the chart requires an existing Secret
+reference and `/healthz` stays public. No actual issuer, credentials, cluster policy
+or deployment was created. These intentional compatibility changes need operator
+review before rollout.

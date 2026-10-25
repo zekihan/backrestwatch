@@ -19,7 +19,9 @@ type fakeAPI struct {
 	err    error
 }
 
-func (f *fakeAPI) Collect(context.Context) (kube.Sample, error) { return f.sample, f.err }
+func (f *fakeAPI) Collect(context.Context) (kube.Sample, error) {
+	return attestFixture(f.sample), f.err
+}
 
 func newTestMonitor(t *testing.T, api *fakeAPI, path string) (*Monitor, *evidence.Store) {
 	t.Helper()

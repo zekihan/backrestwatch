@@ -1,9 +1,12 @@
 package monitor
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ var testNow = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
 func testConfig() config.Config {
 	c := config.Default()
+	c.EvidencePublicKeys = map[string]string{"fixture": base64.StdEncoding.EncodeToString(fixtureKey.Public().(ed25519.PublicKey))}
 	c.Clusters = []config.Cluster{{Namespace: "db", Name: "db", Repos: map[string]config.Repository{"repo1": {}, "repo2": {MaxAgeSeconds: 36000}}}}
 	return c
 }
@@ -38,12 +42,12 @@ func testCron(t *testing.T) kube.CronJob {
 }
 
 func testJob(t *testing.T) kube.Job {
-	return fixture[kube.Job](t, `{"metadata":{"namespace":"db","name":"backup-job","uid":"job-uid","creationTimestamp":"2026-10-02T09:00:00Z","labels":{"postgres-operator.crunchydata.com/cluster":"db","postgres-operator.crunchydata.com/pgbackrest-repo":"repo1","postgres-operator.crunchydata.com/pgbackrest-backup":"scheduled"}},"status":{"succeeded":1,"completionTime":"2026-10-02T11:00:00Z","conditions":[{"type":"Complete","status":"True"}]}}`)
+	return fixture[kube.Job](t, `{"metadata":{"namespace":"db","name":"backup-job","uid":"job-uid","ownerReferences":[{"apiVersion":"postgres-operator.crunchydata.com/v1beta1","kind":"PostgresCluster","name":"db","uid":"cluster-uid","controller":true}],"creationTimestamp":"2026-10-02T09:00:00Z","labels":{"postgres-operator.crunchydata.com/cluster":"db","postgres-operator.crunchydata.com/pgbackrest-repo":"repo1","postgres-operator.crunchydata.com/pgbackrest-backup":"scheduled"}},"status":{"succeeded":1,"completionTime":"2026-10-02T11:00:00Z","conditions":[{"type":"Complete","status":"True"}]}}`)
 }
 
 func evaluate(t *testing.T, sample kube.Sample, old evidence.Ledger, now time.Time) (map[string]Result, evidence.Ledger) {
 	t.Helper()
-	results, ledger, err := Evaluate(testConfig(), sample, old, now)
+	results, ledger, err := Evaluate(testConfig(), attestFixture(sample), old, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +63,7 @@ func TestSourcesAndRetainedSuccess(t *testing.T) {
 	// Failed retries do not negate a successful completion.
 	cluster.Status.PGBackRest.ScheduledBackups = []kube.Backup{{Repo: "repo1", Succeeded: 1, CompletionTime: "2026-10-02T05:00:00Z"}}
 	results, old = evaluate(t, kube.Sample{Clusters: []kube.Cluster{cluster}, Jobs: []kube.Job{testJob(t)}, CronJobs: []kube.CronJob{testCron(t)}}, old, testNow)
-	if results["db/db/repo1"].Source != "Completed Job" || results["db/db/repo2"].Source != "CronJob lastSuccessfulTime" {
+	if results["db/db/repo1"].Source != evidenceSource("Job", fixtureKey.Public().(ed25519.PublicKey)) || results["db/db/repo2"].Source != evidenceSource("CronJob", fixtureKey.Public().(ed25519.PublicKey)) {
 		t.Fatal(results)
 	}
 	// Every live success source can disappear after it has been observed.
@@ -314,4 +318,29 @@ func TestMalformedSampleRejected(t *testing.T) {
 	if _, _, err := Evaluate(testConfig(), kube.Sample{Clusters: []kube.Cluster{cluster, cluster}}, nil, testNow); err == nil {
 		t.Fatal("duplicate sample accepted")
 	}
+}
+
+// Synthetic signing key only. Existing eligibility fixtures are authentically
+// signed at evaluation time so ownership, timestamp and destination checks remain
+// independently exercised. Rejection tests call Evaluate without this helper.
+var fixtureKey = ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+
+func attestFixture(sample kube.Sample) kube.Sample {
+	sample.Jobs, sample.CronJobs = slices.Clone(sample.Jobs), slices.Clone(sample.CronJobs)
+	sign := func(kind string, meta *kube.Metadata, completed string) {
+		for _, cluster := range sample.Clusters {
+			if cluster.Metadata.Namespace != meta.Namespace || cluster.Metadata.Name != meta.Labels[kube.Prefix+"cluster"] {
+				continue
+			}
+			repo := meta.Labels[kube.Prefix+"pgbackrest-repo"]
+			meta.Annotations = map[string]string{attestationKey: "fixture", attestationSignature: base64.StdEncoding.EncodeToString(ed25519.Sign(fixtureKey, AttestationMessage(kind, *meta, cluster, repo, completed)))}
+		}
+	}
+	for i := range sample.Jobs {
+		sign("Job", &sample.Jobs[i].Metadata, sample.Jobs[i].Status.CompletionTime)
+	}
+	for i := range sample.CronJobs {
+		sign("CronJob", &sample.CronJobs[i].Metadata, sample.CronJobs[i].Status.LastSuccessfulTime)
+	}
+	return sample
 }

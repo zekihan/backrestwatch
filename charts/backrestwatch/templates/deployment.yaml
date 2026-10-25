@@ -1,3 +1,4 @@
+{{- $authSecret := required "accessControl.existingSecret must name an existing monitoring credential Secret" .Values.accessControl.existingSecret -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -55,6 +56,9 @@ spec:
               readOnly: true
             - name: evidence
               mountPath: /data
+            - name: backup-auth
+              mountPath: /var/run/backrestwatch-auth
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -62,6 +66,13 @@ spec:
         - name: evidence
           persistentVolumeClaim:
             claimName: {{ include "backrestwatch.claim" . }}
+        - name: backup-auth
+          secret:
+            secretName: {{ $authSecret | quote }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.accessControl.secretKey | quote }}
+                path: token
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

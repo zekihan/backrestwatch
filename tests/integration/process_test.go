@@ -4,6 +4,8 @@ package integration
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"io"
@@ -17,6 +19,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/zekihan/backrestwatch/internal/kube"
+	"github.com/zekihan/backrestwatch/internal/monitor"
 )
 
 func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
@@ -25,6 +30,8 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 		t.Fatal("run make test/integration")
 	}
 	dir := t.TempDir()
+	fixtureKey := ed25519.NewKeyFromSeed(make([]byte, ed25519.SeedSize))
+	const monitoringToken = "synthetic-process-monitoring-token-only"
 	var mu sync.Mutex
 	uid, token, evidencePresent, forbidden := "cluster-uid", "first", true, false
 	bucket, jobCreated, jobCompleted := "old-bucket", "", ""
@@ -54,8 +61,15 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 			}
 		}
 		if strings.HasSuffix(r.URL.Path, "/jobs") && jobCreated != "" {
+			cluster := kube.Cluster{}
+			cluster.Metadata = kube.Metadata{UID: uid, CreationTimestamp: created}
+			cluster.Spec.Backups.PGBackRest.Repos = []kube.Repository{{Name: "repo1", S3: map[string]string{"bucket": bucket, "endpoint": "s3.example.com", "region": "eu-west-1"}}}
+			meta := kube.Metadata{Namespace: "db", Name: "new-backup", UID: "new-job", CreationTimestamp: jobCreated,
+				Labels: map[string]string{kube.Prefix + "cluster": "db", kube.Prefix + "pgbackrest-repo": "repo1", kube.Prefix + "pgbackrest-backup": "scheduled"},
+				Owners: []kube.Owner{{APIVersion: kube.ClusterAPI, Kind: "PostgresCluster", Name: "db", UID: uid, Controller: true}}}
+			meta.Annotations = map[string]string{"backrestwatch.io/attestation-key": "fixture", "backrestwatch.io/attestation-signature": base64.StdEncoding.EncodeToString(ed25519.Sign(fixtureKey, monitor.AttestationMessage("Job", meta, cluster, "repo1", jobCompleted)))}
 			items = []any{map[string]any{
-				"metadata": map[string]any{"namespace": "db", "name": "new-backup", "uid": "new-job", "creationTimestamp": jobCreated, "labels": map[string]string{"postgres-operator.crunchydata.com/cluster": "db", "postgres-operator.crunchydata.com/pgbackrest-repo": "repo1", "postgres-operator.crunchydata.com/pgbackrest-backup": "scheduled"}},
+				"metadata": meta,
 				"status":   map[string]any{"succeeded": 1, "completionTime": jobCompleted, "conditions": []any{map[string]string{"type": "Complete", "status": "True"}}},
 			}}
 		}
@@ -70,13 +84,14 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 	}
 	write(filepath.Join(dir, "ca.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw}))
 	write(filepath.Join(dir, "token"), []byte("first"))
+	write(filepath.Join(dir, "monitoring-token"), []byte(monitoringToken))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	config := map[string]any{"listenAddress": address, "stateFile": filepath.Join(dir, "evidence.json"), "pollIntervalSeconds": 1, "maxSampleAgeSeconds": 8, "requestTimeoutSeconds": 1, "collectionTimeoutSeconds": 3,
+	config := map[string]any{"backupsTokenFile": filepath.Join(dir, "monitoring-token"), "evidencePublicKeys": map[string]string{"fixture": base64.StdEncoding.EncodeToString(fixtureKey.Public().(ed25519.PublicKey))}, "listenAddress": address, "stateFile": filepath.Join(dir, "evidence.json"), "pollIntervalSeconds": 1, "maxSampleAgeSeconds": 8, "requestTimeoutSeconds": 1, "collectionTimeoutSeconds": 3,
 		"clusters": []any{map[string]any{"namespace": "db", "name": "db", "repos": map[string]any{"repo1": map[string]any{}}}}}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -116,7 +131,9 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 		t.Helper()
 		deadline := time.Now().Add(6 * time.Second)
 		for time.Now().Before(deadline) {
-			response, err := client.Get("http://" + address + path)
+			req, _ := http.NewRequest(http.MethodGet, "http://"+address+path, nil)
+			req.Header.Set("Authorization", "Bearer "+monitoringToken)
+			response, err := client.Do(req)
 			if err == nil {
 				body, _ := io.ReadAll(response.Body)
 				response.Body.Close()
@@ -137,6 +154,21 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 	}
 	cmd, done := start()
 	wait("/backups", 200)
+	for _, path := range []string{"/backups", "/backups/db/db/repo1", "/healthz"} {
+		response, err := client.Get("http://" + address + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		want := http.StatusUnauthorized
+		if path == "/healthz" {
+			want = http.StatusOK
+		}
+		if response.StatusCode != want || strings.Contains(string(body), "clusterUID") || strings.Contains(string(body), "repositories") {
+			t.Fatal("unauthenticated route contract", path, response.StatusCode, string(body))
+		}
+	}
 	stop(cmd, done)
 	mu.Lock()
 	evidencePresent = false

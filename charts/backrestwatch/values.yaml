@@ -7,6 +7,8 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 config:
+  # Optional base64 Ed25519 verification keys. No keys means status-only evidence.
+  evidencePublicKeys: {}
   pollIntervalSeconds: 60
   maxSampleAgeSeconds: 180
   maxAgeSeconds: 28800
@@ -18,6 +20,10 @@ config:
       name: database
       repos:
         repo1: {}
+# Must identify an existing Secret; the chart does not issue credentials.
+accessControl:
+  existingSecret: ""
+  secretKey: token
 service:
   port: 8080
 serviceAccount:

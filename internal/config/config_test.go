@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,6 +42,15 @@ func TestStrictConfiguration(t *testing.T) {
 		func(c *Config) { c.ListenAddress = ":" },
 		func(c *Config) { c.ListenAddress = ":+8080" },
 		func(c *Config) { c.StateFile = "relative.json" },
+		func(c *Config) { c.BackupsTokenFile = "" },
+		func(c *Config) { c.BackupsTokenFile = "relative" },
+		func(c *Config) { c.EvidencePublicKeys = map[string]string{"valid": "malformed"} },
+		func(c *Config) {
+			c.EvidencePublicKeys = map[string]string{"valid": base64.StdEncoding.EncodeToString(make([]byte, 31))}
+		},
+		func(c *Config) {
+			c.EvidencePublicKeys = map[string]string{"invalid/id": base64.StdEncoding.EncodeToString(make([]byte, 32))}
+		},
 	} {
 		candidate := c
 		mutate(&candidate)

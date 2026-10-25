@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -34,6 +35,7 @@ func run(logger *slog.Logger) error {
 	tokenFile := flag.String("token-file", "/var/run/secrets/kubernetes.io/serviceaccount/token", "Projected service-account token")
 	caFile := flag.String("ca-file", "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt", "Kubernetes CA bundle")
 	showVersion := flag.Bool("version", false, "Print version and exit")
+	checkCheckpoint := flag.String("check-checkpoint", "", "Validate and lock an offline checkpoint, then exit without contacting Kubernetes")
 	checkConfig := flag.Bool("check-config", false, "Validate configuration and exit without contacting Kubernetes")
 	flag.Parse()
 	if *showVersion {
@@ -43,6 +45,25 @@ func run(logger *slog.Logger) error {
 	cfg, err := config.Load(*configFile)
 	if err != nil {
 		return err
+	}
+	if *checkCheckpoint != "" {
+		if !filepath.IsAbs(*checkCheckpoint) {
+			return fmt.Errorf("checkpoint path must be absolute")
+		}
+		if _, err := os.Stat(*checkCheckpoint); err != nil {
+			return fmt.Errorf("checkpoint must exist: %w", err)
+		}
+		checkpoint, err := evidence.Open(*checkCheckpoint)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = checkpoint.Close() }()
+		ledger, err := checkpoint.Load()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Checkpoint is valid (%d records); no API sample was taken\n", len(ledger))
+		return nil
 	}
 	if *checkConfig {
 		fmt.Println("Configuration is valid")
@@ -72,5 +93,5 @@ func run(logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger.Info("Starting backrestwatch", "version", version, "clusters", len(cfg.Clusters), "address", cfg.ListenAddress)
-	return service.Serve(ctx, listener, monitor.New(cfg, api, store, logger))
+	return service.Serve(ctx, listener, monitor.New(cfg, api, store, logger), cfg.BackupsTokenFile)
 }

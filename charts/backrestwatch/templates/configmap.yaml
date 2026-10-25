@@ -1,4 +1,5 @@
 {{- $config := deepCopy .Values.config -}}
+{{- $_ := set $config "backupsTokenFile" "/var/run/backrestwatch-auth/token" -}}
 {{- $_ := set $config "stateFile" "/data/evidence.json" -}}
 {{- $_ := set $config "listenAddress" ":8080" -}}
 apiVersion: v1
