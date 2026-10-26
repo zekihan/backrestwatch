@@ -16,7 +16,6 @@ type Metadata struct {
 	Name              string            `json:"name"`
 	UID               string            `json:"uid"`
 	CreationTimestamp string            `json:"creationTimestamp"`
-	Annotations       map[string]string `json:"annotations"`
 	Labels            map[string]string `json:"labels"`
 	Owners            []Owner           `json:"ownerReferences"`
 }

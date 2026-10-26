@@ -7,8 +7,6 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 config:
-  # Optional base64 Ed25519 verification keys. No keys means status-only evidence.
-  evidencePublicKeys: {}
   pollIntervalSeconds: 60
   maxSampleAgeSeconds: 180
   maxAgeSeconds: 28800

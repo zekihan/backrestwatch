@@ -52,15 +52,20 @@ status is insufficient (even Job startTime can be reset on resume); a post-bound
 Job or newly created CronJob must establish the next success. See the README for
 migration behavior and the remaining metadata-only observability limits.
 
-## Security compatibility changes
+## Breaking change: backup endpoint authentication
 
-Unsigned Job/CronJob metadata and ownerless Jobs no longer establish successes.
-Configured Ed25519 public keys permit independently attested objects; see
-[evidence authentication](evidence-attestation.md) for the exact protocol and
-issuer decision. Legacy unsigned checkpoint successes are invalidated with a new
-boundary. Protected PostgresCluster status remains eligible on initial collection
-only, subject to existing destination-observability limits. Endpoint callers now
-need a file-backed bearer credential; the chart requires an existing Secret
-reference and `/healthz` stays public. No actual issuer, credentials, cluster policy
-or deployment was created. These intentional compatibility changes need operator
-review before rollout.
+Endpoint callers, including existing Gatus checks, now need an operator-managed
+file-backed bearer credential. Aggregate and per-repository routes require
+`Authorization: Bearer <credential>`. Anonymous requests return 401; a missing or
+invalid credential file returns 503. The chart requires an existing Secret
+reference. `/healthz` remains public process health and does not establish backup
+freshness. Configure clients and verify actual Gatus secret/header wiring before
+an approved rollout; no live client or credential configuration is changed here.
+
+Backup evidence evaluation and checkpoint source handling match the existing
+implementation, including ownerless Job compatibility, current owner UID checks,
+cluster lifetime checks and destination-change barriers. Labels and owner
+references do not authenticate the producer; namespace write permissions and
+trusted operator behavior remain part of the existing trust assumptions. This PR
+adds no signing requirement and does not address producer forgery. No checkpoint
+success is invalidated merely because of its evidence source.

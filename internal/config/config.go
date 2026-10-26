@@ -2,8 +2,6 @@ package config
 
 import (
 	"bytes"
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,16 +25,15 @@ type Cluster struct {
 }
 
 type Config struct {
-	BackupsTokenFile         string            `json:"backupsTokenFile"`
-	EvidencePublicKeys       map[string]string `json:"evidencePublicKeys,omitempty"`
-	ListenAddress            string            `json:"listenAddress"`
-	StateFile                string            `json:"stateFile"`
-	PollIntervalSeconds      int               `json:"pollIntervalSeconds"`
-	MaxSampleAgeSeconds      int               `json:"maxSampleAgeSeconds"`
-	MaxAgeSeconds            int               `json:"maxAgeSeconds"`
-	RequestTimeoutSeconds    int               `json:"requestTimeoutSeconds"`
-	CollectionTimeoutSeconds int               `json:"collectionTimeoutSeconds"`
-	Clusters                 []Cluster         `json:"clusters"`
+	BackupsTokenFile         string    `json:"backupsTokenFile"`
+	ListenAddress            string    `json:"listenAddress"`
+	StateFile                string    `json:"stateFile"`
+	PollIntervalSeconds      int       `json:"pollIntervalSeconds"`
+	MaxSampleAgeSeconds      int       `json:"maxSampleAgeSeconds"`
+	MaxAgeSeconds            int       `json:"maxAgeSeconds"`
+	RequestTimeoutSeconds    int       `json:"requestTimeoutSeconds"`
+	CollectionTimeoutSeconds int       `json:"collectionTimeoutSeconds"`
+	Clusters                 []Cluster `json:"clusters"`
 }
 
 func Default() Config {
@@ -75,15 +72,6 @@ func Repo(s string) bool { return repoName.MatchString(s) }
 func (c Config) Validate() error {
 	if !filepath.IsAbs(c.BackupsTokenFile) || filepath.Base(c.BackupsTokenFile) == "." {
 		return fmt.Errorf("backupsTokenFile must be an absolute file path")
-	}
-	if len(c.EvidencePublicKeys) > 16 {
-		return fmt.Errorf("at most 16 evidence public keys are supported")
-	}
-	for id, encoded := range c.EvidencePublicKeys {
-		key, err := base64.StdEncoding.Strict().DecodeString(encoded)
-		if !Name(id) || err != nil || len(key) != ed25519.PublicKeySize {
-			return fmt.Errorf("invalid evidence public key")
-		}
 	}
 
 	_, port, err := net.SplitHostPort(c.ListenAddress)

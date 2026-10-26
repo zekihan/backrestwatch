@@ -100,7 +100,7 @@ func Evaluate(c config.Config, sample kube.Sample, previous evidence.Ledger, now
 				}
 				next[key] = evidence.Entry{UID: cluster.Metadata.UID, Created: created[clusterKey], RepositoryID: "missing", NotBefore: boundary}
 			} else {
-				result, next[key] = evaluateRepository(c, sample, cluster, repo, created[clusterKey], previous[key], now, maxAge)
+				result, next[key] = evaluateRepository(sample, cluster, repo, created[clusterKey], previous[key], now, maxAge)
 				if next[key].UID == "" {
 					delete(next, key)
 				}
@@ -199,7 +199,8 @@ func cronOwned(cron kube.CronJob, cluster kube.Cluster) bool {
 }
 
 func jobOwned(job kube.Job, cluster kube.Cluster, repo string, crons []kube.CronJob) bool {
-	// Owner references constrain identity; they do not authenticate the producer.
+	// Some PGO versions create Jobs without a controller owner. In that case,
+	// matching labels AND an object created within this cluster's lifetime are required.
 	for _, owner := range job.Metadata.Owners {
 		if !owner.Controller {
 			continue
@@ -217,10 +218,10 @@ func jobOwned(job kube.Job, cluster kube.Cluster, repo string, crons []kube.Cron
 		}
 		return false
 	}
-	return false
+	return true
 }
 
-func evaluateRepository(c config.Config, sample kube.Sample, cluster kube.Cluster, repo string, created time.Time, old evidence.Entry, now time.Time, maxAge int) (Result, evidence.Entry) {
+func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, created time.Time, old evidence.Entry, now time.Time, maxAge int) (Result, evidence.Entry) {
 	result := Result{MaxAgeSeconds: maxAge, ClusterUID: cluster.Metadata.UID}
 	identity := repositoryIdentity(cluster, repo)
 	best := evidence.Entry{UID: cluster.Metadata.UID, Created: created, RepositoryID: identity}
@@ -244,17 +245,6 @@ func evaluateRepository(c config.Config, sample kube.Sample, cluster kube.Cluste
 				// but must not erase it from the next durable checkpoint.
 				invalid = old.NotBefore.After(now) || old.LastSuccess.After(now)
 			}
-		}
-	}
-	// Legacy unsigned Job/CronJob successes and evidence from revoked keys must
-	// never outlive the producer authentication policy. Preserve all safety barriers.
-	if !best.LastSuccess.IsZero() && !trustedSource(c, best.Source) {
-		best.LastSuccess, best.Source = time.Time{}, ""
-		if now.After(best.NotBefore) {
-			best.NotBefore = now
-		}
-		if created.After(best.NotBefore) {
-			best.NotBefore = created
 		}
 	}
 	baseline := best
@@ -293,10 +283,6 @@ func evaluateRepository(c config.Config, sample kube.Sample, cluster kube.Cluste
 		if !labelsMatch(job.Metadata, cluster, repo) || job.Status.Succeeded <= 0 || !jobOwned(job, cluster, repo, sample.CronJobs) {
 			continue
 		}
-		source := attestedSource(c, "Job", job.Metadata, cluster, repo, job.Status.CompletionTime)
-		if source == "" {
-			continue
-		}
 		complete := false
 		for _, condition := range job.Status.Conditions {
 			complete = complete || (condition.Type == "Complete" && condition.Status == "True")
@@ -317,15 +303,11 @@ func evaluateRepository(c config.Config, sample kube.Sample, cluster kube.Cluste
 			invalid = true
 			continue
 		}
-		accept(job.Status.CompletionTime, source)
+		accept(job.Status.CompletionTime, "Completed Job")
 	}
 	for _, cron := range sample.CronJobs {
 		if !labelsMatch(cron.Metadata, cluster, repo) || cron.Metadata.Labels[kube.Prefix+"pgbackrest-backup"] != "scheduled" ||
 			!cronOwned(cron, cluster) || cron.Status.LastSuccessfulTime == "" {
-			continue
-		}
-		source := attestedSource(c, "CronJob", cron.Metadata, cluster, repo, cron.Status.LastSuccessfulTime)
-		if source == "" {
 			continue
 		}
 		birth, err := timestamp(cron.Metadata.CreationTimestamp, now)
@@ -344,7 +326,7 @@ func evaluateRepository(c config.Config, sample kube.Sample, cluster kube.Cluste
 		if completed.Before(birth) {
 			continue
 		}
-		accept(cron.Status.LastSuccessfulTime, source)
+		accept(cron.Status.LastSuccessfulTime, "CronJob lastSuccessfulTime")
 	}
 	if invalid {
 		result.Reason = "Invalid successful backup completion timestamp"

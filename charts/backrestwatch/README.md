@@ -28,7 +28,6 @@ config:
 | --- | --- |
 | `image.repository`, `tag`, `digest` | GHCR; tag defaults to appVersion; digest takes precedence |
 | `accessControl.existingSecret`, `secretKey` | required existing Secret name; key defaults to `token`; read-only credential-file mount, no anonymous backup access |
-| `config.evidencePublicKeys` | `{}`: protected status only; optional base64 Ed25519 verification keys for independently attested Job/CronJob completions |
 | `config` | validated monitoring inventory and thresholds; bind address and state path are chart-managed |
 | `resources` | 10m / 32Mi requests; 128Mi memory limit; no CPU limit |
 | `service.port` | 8080; container port remains 8080 |
@@ -68,9 +67,12 @@ restorability. See the application README for recovery and diagnostic behavior.
 Backup routes require a bearer credential; `/healthz` remains minimal and public
 for probes. Use approved TLS transport and monitoring clients. Secret projection
 updates are read per request. A missing, short or malformed file fails closed.
-The chart does not provision keys, a signing controller, TLS or live trust policy.
-See the application README and `docs/evidence-attestation.md` for the compatibility
-change, trusted-status assumptions and operator acceptance still required.
+The chart does not provision credentials, TLS or live trust policy.
+This is a breaking endpoint change: existing monitoring clients, including Gatus,
+must send `Authorization: Bearer <credential>`. Without the header they receive
+401; a missing/invalid server credential file returns 503. Configure clients before
+an approved rollout. See the application's breaking-change notice and verify
+actual Gatus wiring separately; this PR does not change live monitoring.
 
 For offline lint/render validation only, supply a synthetic reference such as
 `--set accessControl.existingSecret=chart-validation-only`; this does not create a

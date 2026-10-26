@@ -49,20 +49,13 @@ backup Jobs, and scheduled-backup CronJobs. It uses the newest eligible success:
 - a current PostgresCluster's successful `status.pgbackrest.scheduledBackups` entry;
 - an eligible scheduled CronJob's `status.lastSuccessfulTime`.
 
-Namespace, cluster and repository labels must match. Job and CronJob successes
-also require a verified Ed25519 attestation from an independently trusted backup
-verifier, using explicitly configured `evidencePublicKeys`. Owner references alone
-are never authentication; ownerless Jobs are rejected. No keys means only
-protected PostgresCluster scheduled-backup status is accepted. Operators must
-confirm that status writers and PGO's upstream evidence are trusted.
-
-CronJobs must have a controller owner reference to the current PostgresCluster
-UID and API version. Jobs must resolve directly to the current cluster or through
-an eligible current CronJob. All object and completion timestamps must include a
-timezone and must not be in the future. Old objects cannot supply a completion
-after cluster recreation. See [producer authentication](docs/evidence-attestation.md)
-for the signature format, issuer requirements, status-only destination limits and
-upgrade behavior for unsigned checkpoints.
+Namespace, cluster and repository labels must match. CronJobs must have a
+controller owner reference to the current PostgresCluster UID and API version.
+Jobs with controller owners must resolve directly to the current cluster or
+through an eligible current CronJob. Jobs without controller owners require
+matching labels and creation within the current cluster's lifetime. All object
+and completion timestamps must include a timezone and must not be in the future.
+Old objects cannot supply a completion after a cluster has been recreated.
 
 Repository identity includes the effective configured backend destination and path,
 plus PVC binding identity where available. An observed destination change or
@@ -151,7 +144,6 @@ Helm config changes trigger a rollout.
 | `collectionTimeoutSeconds` | 45 | deadline for all lists, pages and retries |
 | `listenAddress` | `:8080` | HTTP bind address |
 | `backupsTokenFile` | `/var/run/backrestwatch-auth/token` | absolute path to operator-managed monitoring bearer credential |
-| `evidencePublicKeys` | `{}` | key ID to base64 Ed25519 public key; unsigned Job/CronJob evidence is ignored |
 | `stateFile` | `/data/evidence.json` | absolute checkpoint file path |
 
 Sample age starts when collection begins. Backup age remains measured from the
@@ -183,7 +175,22 @@ status where available, without response bodies, tokens or authorization headers
 503 responses identify missing inventory, invalid metadata, stale completions,
 stale samples, API failures, or persistence failures.
 
-## Backup endpoint access
+## Breaking change: backup endpoint authentication
+
+Existing endpoint clients, including Gatus, must now send an approved credential
+in `Authorization: Bearer <credential>` for both `/backups` and per-repository
+routes. Anonymous requests that previously returned backup status now return 401;
+a missing or invalid server credential file returns 503. `/healthz` remains 200
+without a credential and cannot be used as a backup-freshness check.
+
+Before an upgrade, arrange the existing Secret reference, configure each client's
+header through its approved secret-management mechanism, and verify authenticated
+200/503 backup responses and anonymous denial in an approved test environment.
+Gatus wiring feasibility is separate acceptance work; no live Gatus configuration
+or credentials are changed by this PR. Deploying this change before clients are
+updated will break their backup checks.
+
+
 
 The chart will not render until `accessControl.existingSecret` names an existing
 Secret and `accessControl.secretKey` selects its credential key (default `token`).
