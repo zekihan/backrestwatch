@@ -1,10 +1,15 @@
 # backrestwatch chart
 
 Install `oci://ghcr.io/zekihan/charts/backrestwatch` with an explicit complete
-inventory. The default `database/database/repo1` is illustrative. Replace it
+inventory and an explicit `accessControl.existingSecret` referring to an approved
+existing monitoring credential. The chart refuses to render without it and never
+issues a credential. The default `database/database/repo1` is illustrative. Replace it
 before installation; an empty inventory is rejected.
 
 ```yaml
+accessControl:
+  existingSecret: backrestwatch-monitoring-auth
+  secretKey: token
 config:
   maxAgeSeconds: 28800
   maxSampleAgeSeconds: 180
@@ -22,6 +27,7 @@ config:
 | values | default / behavior |
 | --- | --- |
 | `image.repository`, `tag`, `digest` | GHCR; tag defaults to appVersion; digest takes precedence |
+| `accessControl.existingSecret`, `secretKey` | required existing Secret name; key defaults to `token`; read-only credential-file mount, no anonymous backup access |
 | `config` | validated monitoring inventory and thresholds; bind address and state path are chart-managed |
 | `resources` | 10m / 32Mi requests; 128Mi memory limit; no CPU limit |
 | `service.port` | 8080; container port remains 8080 |
@@ -57,3 +63,17 @@ the caller to inspect 503 responses.
 Keep the evidence PVC through upgrades. The root filesystem remains read-only;
 only `/data` is writable. Backup completion metadata does not establish
 restorability. See the application README for recovery and diagnostic behavior.
+
+Backup routes require a bearer credential; `/healthz` remains minimal and public
+for probes. Use approved TLS transport and monitoring clients. Secret projection
+updates are read per request. A missing, short or malformed file fails closed.
+The chart does not provision credentials, TLS or live trust policy.
+This is a breaking endpoint change: existing monitoring clients, including Gatus,
+must send `Authorization: Bearer <credential>`. Without the header they receive
+401; a missing/invalid server credential file returns 503. Configure clients before
+an approved rollout. See the application's breaking-change notice and verify
+actual Gatus wiring separately; this PR does not change live monitoring.
+
+For offline lint/render validation only, supply a synthetic reference such as
+`--set accessControl.existingSecret=chart-validation-only`; this does not create a
+Secret and does not constitute a deployable credential configuration.

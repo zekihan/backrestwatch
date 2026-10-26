@@ -10,7 +10,13 @@
     {
       "namespace": "database",
       "name": "database",
-      "repos": {"repo1": {}, "repo2": {"maxAgeSeconds": 36000}}
+      "repos": {
+        "repo1": {},
+        "repo2": {
+          "maxAgeSeconds": 36000
+        }
+      }
     }
-  ]
+  ],
+  "backupsTokenFile": "/var/run/backrestwatch-auth/token"
 }

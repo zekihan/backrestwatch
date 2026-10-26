@@ -25,6 +25,7 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 		t.Fatal("run make test/integration")
 	}
 	dir := t.TempDir()
+	const monitoringToken = "synthetic-process-monitoring-token-only"
 	var mu sync.Mutex
 	uid, token, evidencePresent, forbidden := "cluster-uid", "first", true, false
 	bucket, jobCreated, jobCompleted := "old-bucket", "", ""
@@ -70,13 +71,14 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 	}
 	write(filepath.Join(dir, "ca.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw}))
 	write(filepath.Join(dir, "token"), []byte("first"))
+	write(filepath.Join(dir, "monitoring-token"), []byte(monitoringToken))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	address := listener.Addr().String()
 	listener.Close()
-	config := map[string]any{"listenAddress": address, "stateFile": filepath.Join(dir, "evidence.json"), "pollIntervalSeconds": 1, "maxSampleAgeSeconds": 8, "requestTimeoutSeconds": 1, "collectionTimeoutSeconds": 3,
+	config := map[string]any{"backupsTokenFile": filepath.Join(dir, "monitoring-token"), "listenAddress": address, "stateFile": filepath.Join(dir, "evidence.json"), "pollIntervalSeconds": 1, "maxSampleAgeSeconds": 8, "requestTimeoutSeconds": 1, "collectionTimeoutSeconds": 3,
 		"clusters": []any{map[string]any{"namespace": "db", "name": "db", "repos": map[string]any{"repo1": map[string]any{}}}}}
 	data, err := json.Marshal(config)
 	if err != nil {
@@ -116,7 +118,9 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 		t.Helper()
 		deadline := time.Now().Add(6 * time.Second)
 		for time.Now().Before(deadline) {
-			response, err := client.Get("http://" + address + path)
+			req, _ := http.NewRequest(http.MethodGet, "http://"+address+path, nil)
+			req.Header.Set("Authorization", "Bearer "+monitoringToken)
+			response, err := client.Do(req)
 			if err == nil {
 				body, _ := io.ReadAll(response.Body)
 				response.Body.Close()
@@ -137,6 +141,21 @@ func TestProcessRestartRotationFailuresAndSignal(t *testing.T) {
 	}
 	cmd, done := start()
 	wait("/backups", 200)
+	for _, path := range []string{"/backups", "/backups/db/db/repo1", "/healthz"} {
+		response, err := client.Get("http://" + address + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		want := http.StatusUnauthorized
+		if path == "/healthz" {
+			want = http.StatusOK
+		}
+		if response.StatusCode != want || strings.Contains(string(body), "clusterUID") || strings.Contains(string(body), "repositories") {
+			t.Fatal("unauthenticated route contract", path, response.StatusCode, string(body))
+		}
+	}
 	stop(cmd, done)
 	mu.Lock()
 	evidencePresent = false

@@ -51,3 +51,21 @@ carry the destination identity. After a detected change, aggregate scheduled
 status is insufficient (even Job startTime can be reset on resume); a post-boundary
 Job or newly created CronJob must establish the next success. See the README for
 migration behavior and the remaining metadata-only observability limits.
+
+## Breaking change: backup endpoint authentication
+
+Endpoint callers, including existing Gatus checks, now need an operator-managed
+file-backed bearer credential. Aggregate and per-repository routes require
+`Authorization: Bearer <credential>`. Anonymous requests return 401; a missing or
+invalid credential file returns 503. The chart requires an existing Secret
+reference. `/healthz` remains public process health and does not establish backup
+freshness. Configure clients and verify actual Gatus secret/header wiring before
+an approved rollout; no live client or credential configuration is changed here.
+
+Backup evidence evaluation and checkpoint source handling match the existing
+implementation, including ownerless Job compatibility, current owner UID checks,
+cluster lifetime checks and destination-change barriers. Labels and owner
+references do not authenticate the producer; namespace write permissions and
+trusted operator behavior remain part of the existing trust assumptions. This PR
+adds no signing requirement and does not address producer forgery. No checkpoint
+success is invalidated merely because of its evidence source.

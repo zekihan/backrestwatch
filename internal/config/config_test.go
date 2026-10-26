@@ -41,6 +41,8 @@ func TestStrictConfiguration(t *testing.T) {
 		func(c *Config) { c.ListenAddress = ":" },
 		func(c *Config) { c.ListenAddress = ":+8080" },
 		func(c *Config) { c.StateFile = "relative.json" },
+		func(c *Config) { c.BackupsTokenFile = "" },
+		func(c *Config) { c.BackupsTokenFile = "relative" },
 	} {
 		candidate := c
 		mutate(&candidate)

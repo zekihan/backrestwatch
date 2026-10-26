@@ -18,6 +18,10 @@ config:
       name: database
       repos:
         repo1: {}
+# Must identify an existing Secret; the chart does not issue credentials.
+accessControl:
+  existingSecret: ""
+  secretKey: token
 service:
   port: 8080
 serviceAccount:

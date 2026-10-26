@@ -146,6 +146,26 @@
           "type": "array"
         }
       }
+    },
+    "accessControl": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "existingSecret",
+        "secretKey"
+      ],
+      "properties": {
+        "existingSecret": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "secretKey": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9._-]+$"
+        }
+      }
     }
   }
 }

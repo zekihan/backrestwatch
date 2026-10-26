@@ -11,6 +11,11 @@ restore, database connection, Secret read, or notification operation.
 | `/backups` | 200 when every expected repository is fresh and the inventory matches; otherwise 503 |
 | `/backups/<namespace>/<cluster>/<repo>` | 200 for a fresh completion, 503 for unhealthy/unavailable evidence, 404 for an unknown repository |
 
+Backup routes require `Authorization: Bearer <credential>` from an operator-managed
+credential file. Unauthorized requests receive 401 without inventory or failure
+details; an unavailable/invalid credential file fails closed with 503. `/healthz`
+is deliberately unauthenticated and returns only process health.
+
 Backup failures leave the Service and diagnostic endpoints reachable. All pod
 probes use `/healthz`. Responses use `Cache-Control: no-store` and backup ages
 continue increasing between samples.
@@ -27,7 +32,7 @@ helm upgrade --install backrestwatch oci://ghcr.io/zekihan/charts/backrestwatch 
   --version 0.1.2 --namespace backup-monitoring --create-namespace \
   --values examples/values.yaml
 kubectl -n backup-monitoring port-forward service/backrestwatch 8080:8080
-curl -i http://localhost:8080/backups
+curl -i -H "Authorization: Bearer $BACKRESTWATCH_MONITORING_TOKEN" http://localhost:8080/backups
 ```
 
 Images are published as `docker.io/zekihan/backrestwatch:0.1.2` and
@@ -111,8 +116,9 @@ clears its saved success. Re-adding it requires eligible evidence after that
 record's boundary; old aggregate status cannot restore health. These records
 count toward the checkpoint's 4,000-repository limit. Exceeding the limit fails
 closed without dropping records or replacing the checkpoint. Retiring old records
-requires deliberate checkpoint maintenance; preserve a copy before removing any
-history, since removal discards its protection against stale evidence.
+requires explicit operator approval and the [offline retirement runbook](docs/checkpoint-retirement.md),
+including a validated backup, exact retired-key review, atomic replacement, fresh
+API sample and rollback. Removal discards protection against stale evidence.
 Observed destination changes and disappearances remain invalidated in memory
 across failed writes, so storage recovery cannot resurrect the old completion.
 New successes are retained only after a successful write. Pending invalidations
@@ -137,6 +143,7 @@ Helm config changes trigger a rollout.
 | `requestTimeoutSeconds` | 10 | per-request deadline |
 | `collectionTimeoutSeconds` | 45 | deadline for all lists, pages and retries |
 | `listenAddress` | `:8080` | HTTP bind address |
+| `backupsTokenFile` | `/var/run/backrestwatch-auth/token` | absolute path to operator-managed monitoring bearer credential |
 | `stateFile` | `/data/evidence.json` | absolute checkpoint file path |
 
 Sample age starts when collection begins. Backup age remains measured from the
@@ -167,6 +174,47 @@ Logs are structured JSON. API diagnostics include the resource path and HTTP
 status where available, without response bodies, tokens or authorization headers.
 503 responses identify missing inventory, invalid metadata, stale completions,
 stale samples, API failures, or persistence failures.
+
+## Breaking change: backup endpoint authentication
+
+Existing endpoint clients, including Gatus, must now send an approved credential
+in `Authorization: Bearer <credential>` for both `/backups` and per-repository
+routes. Anonymous requests that previously returned backup status now return 401;
+a missing or invalid server credential file returns 503. `/healthz` remains 200
+without a credential and cannot be used as a backup-freshness check.
+
+Before an upgrade, arrange the existing Secret reference, configure each client's
+header through its approved secret-management mechanism, and verify authenticated
+200/503 backup responses and anonymous denial in an approved test environment.
+Gatus wiring feasibility is separate acceptance work; no live Gatus configuration
+or credentials are changed by this PR. Deploying this change before clients are
+updated will break their backup checks.
+
+
+
+The chart will not render until `accessControl.existingSecret` names an existing
+Secret and `accessControl.secretKey` selects its credential key (default `token`).
+It mounts that key read-only, never puts credential bytes in the ConfigMap, never
+creates a Secret and grants no Kubernetes Secret-read API permission. The example
+values name a placeholder Secret; an operator must supply an approved existing
+credential before installation. This is an intentional secure installation change.
+
+Credentials must contain 32–4096 visible ASCII bytes (a single final newline is
+allowed within the 4096-byte file limit). The file is reread on every backup
+request so projected Secret updates take effect without a restart. Clients must
+send exactly one `Authorization: Bearer ...` header. Treat credentials as secrets;
+use TLS through an approved authenticated ingress/service mesh or equivalent
+protected transport, restrict permitted clients and avoid plaintext/shared logs.
+The application does not terminate TLS. NetworkPolicy remains optional defense
+in depth and needs operator-approved API peers and monitoring selectors.
+
+Both aggregate and per-repository routes enforce the same boundary before
+returning detailed status or unknown-repository information. `/healthz` remains
+minimal and usable by platform probes independently of credentials. Local HTTP
+fixtures verify denial, authorized detailed status, rotation and credential-file
+failure. Actual unrelated-namespace denial, monitoring-identity access, TLS and CNI
+probe behavior have not been exercised on a live cluster and require separate
+operator approval. No live credentials or network settings were changed.
 
 ## development and releases
 

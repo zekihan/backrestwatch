@@ -14,7 +14,7 @@ HELM = os.environ.get("HELM", "helm")
 
 def render(*args, release="watch", namespace="monitoring"):
     result = subprocess.run(
-        [HELM, "template", release, str(CHART), "-n", namespace, *args],
+        [HELM, "template", release, str(CHART), "-n", namespace, "--set", "accessControl.existingSecret=fixture-auth", *args],
         check=True,
         text=True,
         capture_output=True,
@@ -73,6 +73,22 @@ class ChartTests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
+
+    def test_explicit_access_control_required(self):
+        result = subprocess.run([HELM, "template", "watch", str(CHART)], capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("accessControl.existingSecret", result.stderr)
+        docs = render()
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        auth = next(v for v in pod["volumes"] if v["name"] == "backup-auth")
+        self.assertEqual(auth["secret"]["secretName"], "fixture-auth")
+        self.assertEqual(auth["secret"]["defaultMode"], 0o440)
+        self.assertEqual(auth["secret"]["items"], [{"key": "token", "path": "token"}])
+        mount = next(v for v in pod["containers"][0]["volumeMounts"] if v["name"] == "backup-auth")
+        self.assertTrue(mount["readOnly"])
+        self.assertFalse(any(d["kind"] == "Secret" for d in docs))
+        config = json.loads(next(d for d in docs if d["kind"] == "ConfigMap")["data"]["config.json"])
+        self.assertEqual(config["backupsTokenFile"], mount["mountPath"] + "/token")
 
     def test_existing_claim_account_and_digest(self):
         digest = "sha256:" + "a" * 64
@@ -144,6 +160,7 @@ class ChartTests(unittest.TestCase):
         )
         self.assertEqual(policy["ingress"][0]["ports"][0]["port"], 8080)
         for override in (
+            "accessControl.existingSecret=",
             "config.clusters=[]",
             "config.maxAgeSeconds=0",
             "config.clusters[0].repos.repo5.maxAgeSeconds=10",
@@ -151,7 +168,7 @@ class ChartTests(unittest.TestCase):
             "serviceAccount.create=false",
         ):
             result = subprocess.run(
-                [HELM, "template", "watch", str(CHART), "--set", override],
+                [HELM, "template", "watch", str(CHART), "--set", "accessControl.existingSecret=fixture-auth", "--set", override],
                 capture_output=True,
                 text=True,
             )

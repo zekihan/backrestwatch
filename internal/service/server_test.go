@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -49,6 +50,10 @@ func (a observingAPI) Collect(ctx context.Context) (kube.Sample, error) {
 
 func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 	cfg := config.Default()
+	tokenFile := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenFile, []byte(testToken), 0600); err != nil {
+		t.Fatal(err)
+	}
 	cfg.Clusters = []config.Cluster{{Namespace: "db", Name: "db", Repos: map[string]config.Repository{"repo1": {}}}}
 	store, err := evidence.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {
@@ -64,7 +69,7 @@ func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, listener, m) }()
+	go func() { done <- Serve(ctx, listener, m, tokenFile) }()
 	select {
 	case <-api.started:
 	case <-time.After(time.Second):
@@ -72,7 +77,11 @@ func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 	}
 	client := &http.Client{Timeout: time.Second}
 	for path, code := range map[string]int{"/healthz": 200, "/backups": 503, "/backups/db/db/repo1": 503, "/backups/db/db/repo2": 404, "/backups/": 404, "/unknown": 404} {
-		response, err := client.Get("http://" + listener.Addr().String() + path)
+		response, err := func() (*http.Response, error) {
+			req, _ := http.NewRequest(http.MethodGet, "http://"+listener.Addr().String()+path, nil)
+			req.Header.Set("Authorization", "Bearer "+testToken)
+			return client.Do(req)
+		}()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +93,7 @@ func TestHTTPContractAndGracefulShutdown(t *testing.T) {
 	}
 	for method, code := range map[string]int{"HEAD": 200, "POST": 405} {
 		recorder := httptest.NewRecorder()
-		Handler(m).ServeHTTP(recorder, httptest.NewRequest(method, "/healthz", nil))
+		Handler(m, tokenFile).ServeHTTP(recorder, httptest.NewRequest(method, "/healthz", nil))
 		if recorder.Code != code || (method == "HEAD" && recorder.Body.Len() != 0) {
 			t.Fatal(method, recorder.Code)
 		}
@@ -116,7 +125,7 @@ func TestServeBoundsWaitForBlockedPersistence(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, listener, m, 50*time.Millisecond) }()
+	go func() { done <- serve(ctx, listener, m, "", 50*time.Millisecond) }()
 
 	select {
 	case <-store.started:

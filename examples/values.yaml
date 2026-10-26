@@ -1,3 +1,6 @@
+accessControl:
+  existingSecret: backrestwatch-monitoring-auth
+  secretKey: token
 config:
   clusters:
     - namespace: database

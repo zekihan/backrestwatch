@@ -13,10 +13,22 @@ import (
 	"github.com/zekihan/backrestwatch/internal/monitor"
 )
 
-func Handler(m *monitor.Monitor) http.Handler {
+func Handler(m *monitor.Monitor, tokenFile string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == "/backups" || strings.HasPrefix(r.URL.Path, "/backups/") {
+			if code := authorize(r, tokenFile); code != http.StatusOK {
+				if code == http.StatusUnauthorized {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="backups"`)
+				}
+				w.WriteHeader(code)
+				if r.Method != http.MethodHead {
+					_ = json.NewEncoder(w).Encode(map[string]string{"reason": "Backup status access denied"})
+				}
+				return
+			}
+		}
 		var payload any = monitor.Result{Reason: "Unknown path"}
 		code := http.StatusNotFound
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -43,14 +55,14 @@ func Handler(m *monitor.Monitor) http.Handler {
 }
 
 // Serve owns both goroutines and drains HTTP before returning on cancellation.
-func Serve(ctx context.Context, listener net.Listener, m *monitor.Monitor) error {
-	return serve(ctx, listener, m, 15*time.Second)
+func Serve(ctx context.Context, listener net.Listener, m *monitor.Monitor, tokenFile string) error {
+	return serve(ctx, listener, m, tokenFile, 15*time.Second)
 }
 
-func serve(ctx context.Context, listener net.Listener, m *monitor.Monitor, shutdownTimeout time.Duration) error {
+func serve(ctx context.Context, listener net.Listener, m *monitor.Monitor, tokenFile string, shutdownTimeout time.Duration) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	server := &http.Server{Handler: Handler(m), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
+	server := &http.Server{Handler: Handler(m, tokenFile), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second,
 		WriteTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 	pollDone := make(chan struct{})
 	go func() { defer close(pollDone); m.Run(ctx) }()
