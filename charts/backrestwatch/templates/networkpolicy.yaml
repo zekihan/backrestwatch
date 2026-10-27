@@ -16,7 +16,9 @@ spec:
     - from:
         {{- required "networkPolicy.ingressFrom must identify monitoring clients" .Values.networkPolicy.ingressFrom | toYaml | nindent 8 }}
       ports:
-        - {port: 8080, protocol: TCP}
+        {{- range .Values.networkPolicy.ingressPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
   egress:
     - to:
         {{- range (required "networkPolicy.apiPeers must identify Kubernetes API peers" .Values.networkPolicy.apiPeers) }}

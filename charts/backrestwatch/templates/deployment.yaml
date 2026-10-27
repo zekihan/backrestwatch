@@ -59,6 +59,9 @@ spec:
             - name: backup-auth
               mountPath: /var/run/backrestwatch-auth
               readOnly: true
+        {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
         - name: config
           configMap:
@@ -73,6 +76,9 @@ spec:
             items:
               - key: {{ .Values.accessControl.secretKey | quote }}
                 path: token
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

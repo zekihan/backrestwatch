@@ -24,6 +24,9 @@ accessControl:
   secretKey: token
 service:
   port: 8080
+  extraPorts: []
+extraContainers: []
+extraVolumes: []
 serviceAccount:
   create: true
   name: ""
@@ -74,6 +77,7 @@ networkPolicy:
   apiPeers: []
   apiPorts: [443, 6443]
   ingressFrom: []
+  ingressPorts: [8080]
   # No DNS access is needed for the in-cluster API environment's IP address.
   extraEgress: []
 podAnnotations: {}

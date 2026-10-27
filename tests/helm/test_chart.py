@@ -74,6 +74,26 @@ class ChartTests(unittest.TestCase):
                 capture_output=True,
             )
 
+    def test_opt_in_sidecar_ports_and_volumes(self):
+        values = {
+            "extraContainers": [{"name": "tls-proxy", "image": "example.invalid/proxy@sha256:" + "a" * 64, "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": True}]}],
+            "extraVolumes": [{"name": "tls", "secret": {"secretName": "monitor-tls"}}],
+            "service": {"extraPorts": [{"name": "https", "port": 8443, "targetPort": 8443, "protocol": "TCP"}]},
+            "networkPolicy": {"enabled": True, "apiPeers": ["10.0.0.1/32"], "ingressFrom": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "gatus"}}}], "ingressPorts": [8443]},
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
+            yaml.safe_dump(values, f)
+            f.flush()
+            docs = render("-f", f.name)
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        proxy = next(c for c in pod["containers"] if c["name"] == "tls-proxy")
+        self.assertTrue(proxy["volumeMounts"][0]["readOnly"])
+        self.assertEqual(next(v for v in pod["volumes"] if v["name"] == "tls")["secret"]["secretName"], "monitor-tls")
+        service = next(d for d in docs if d["kind"] == "Service")
+        self.assertEqual(next(p for p in service["spec"]["ports"] if p["name"] == "https")["targetPort"], 8443)
+        policy = next(d for d in docs if d["kind"] == "NetworkPolicy")
+        self.assertEqual(policy["spec"]["ingress"][0]["ports"], [{"port": 8443, "protocol": "TCP"}])
+
     def test_explicit_access_control_required(self):
         result = subprocess.run([HELM, "template", "watch", str(CHART)], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)

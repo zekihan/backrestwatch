@@ -77,3 +77,5 @@ actual Gatus wiring separately; this PR does not change live monitoring.
 For offline lint/render validation only, supply a synthetic reference such as
 `--set accessControl.existingSecret=chart-validation-only`; this does not create a
 Secret and does not constitute a deployable credential configuration.
+
+Optional `extraContainers`, `extraVolumes`, `service.extraPorts`, and `networkPolicy.ingressPorts` allow an operator-managed TLS proxy. The operator must supply and validate its image, certificates, security context, ports, and network policy; the chart does not configure TLS automatically.
