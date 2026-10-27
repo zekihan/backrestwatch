@@ -28,6 +28,8 @@ service:
 extraContainers: []
 extraVolumes: []
 serviceAccount:
+  # Disable Pod-wide automount and project API credentials only into the app.
+  isolateToken: false
   create: true
   name: ""
   annotations: {}

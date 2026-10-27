@@ -94,6 +94,22 @@ class ChartTests(unittest.TestCase):
         policy = next(d for d in docs if d["kind"] == "NetworkPolicy")
         self.assertEqual(policy["spec"]["ingress"][0]["ports"], [{"port": 8443, "protocol": "TCP"}])
 
+    def test_isolated_service_account_token_only_in_main_container(self):
+        docs = render("--set", "serviceAccount.isolateToken=true", "--set", "extraContainers[0].name=proxy", "--set", "extraContainers[0].image=proxy")
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        self.assertFalse(pod["automountServiceAccountToken"])
+        app, proxy = pod["containers"]
+        mount = next(m for m in app["volumeMounts"] if m["name"] == "kubernetes-api-access")
+        self.assertEqual(mount["mountPath"], "/var/run/secrets/kubernetes.io/serviceaccount")
+        self.assertTrue(mount["readOnly"])
+        self.assertFalse(proxy.get("volumeMounts"))
+        sources = next(v for v in pod["volumes"] if v["name"] == "kubernetes-api-access")["projected"]["sources"]
+        self.assertEqual(sources[0]["serviceAccountToken"]["path"], "token")
+        self.assertEqual(sources[1]["configMap"]["name"], "kube-root-ca.crt")
+        self.assertEqual(sources[2]["downwardAPI"]["items"][0]["fieldRef"]["fieldPath"], "metadata.namespace")
+        default_pod = next(d for d in render() if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        self.assertTrue(default_pod["automountServiceAccountToken"])
+
     def test_network_policy_rejects_invalid_ingress_ports(self):
         base = {"networkPolicy": {"enabled": True, "apiPeers": ["10.0.0.1/32"], "ingressFrom": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "gatus"}}}]}}
         for ports in (None, [], [0], [65536], [-1], ["8443"], [1.5]):

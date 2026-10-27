@@ -79,3 +79,5 @@ For offline lint/render validation only, supply a synthetic reference such as
 Secret and does not constitute a deployable credential configuration.
 
 Optional `extraContainers`, `extraVolumes`, `service.extraPorts`, and `networkPolicy.ingressPorts` allow an operator-managed TLS proxy. The operator must supply and validate its image, certificates, security context, ports, and network policy; the chart does not configure TLS automatically.
+
+Set `serviceAccount.isolateToken: true` when adding a sidecar to disable Pod-wide API credential automount and project the API token, CA and namespace into the Backrestwatch container only. Extra containers must not mount that volume.
