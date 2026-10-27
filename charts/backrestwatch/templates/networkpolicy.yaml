@@ -1,4 +1,7 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- if not .Values.networkPolicy.ingressPorts }}
+{{- fail "networkPolicy.ingressPorts must contain at least one TCP port" }}
+{{- end }}
 {{- if or (eq (len .Values.networkPolicy.apiPeers) 0) (eq (len .Values.networkPolicy.ingressFrom) 0) }}
 {{- fail "networkPolicy.apiPeers and ingressFrom must identify API peers and monitoring clients" }}
 {{- end }}

@@ -94,6 +94,21 @@ class ChartTests(unittest.TestCase):
         policy = next(d for d in docs if d["kind"] == "NetworkPolicy")
         self.assertEqual(policy["spec"]["ingress"][0]["ports"], [{"port": 8443, "protocol": "TCP"}])
 
+    def test_network_policy_rejects_invalid_ingress_ports(self):
+        base = {"networkPolicy": {"enabled": True, "apiPeers": ["10.0.0.1/32"], "ingressFrom": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "gatus"}}}]}}
+        for ports in (None, [], [0], [65536], [-1], ["8443"], [1.5]):
+            base["networkPolicy"]["ingressPorts"] = ports
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
+                yaml.safe_dump(base, f)
+                f.flush()
+                command = [HELM, "template", "watch", str(CHART), "--set", "accessControl.existingSecret=fixture-auth", "-f", f.name]
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, repr(ports))
+                if ports is None or ports == []:
+                    guarded = subprocess.run(command + ["--skip-schema-validation"], capture_output=True, text=True)
+                    self.assertNotEqual(guarded.returncode, 0, repr(ports))
+                    self.assertIn("networkPolicy.ingressPorts", guarded.stderr)
+
     def test_explicit_access_control_required(self):
         result = subprocess.run([HELM, "template", "watch", str(CHART)], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
