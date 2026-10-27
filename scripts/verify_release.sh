@@ -36,6 +36,6 @@ test "$(sed -n 's/^version: //p' "$verify_dir/chart.yaml")" = "$version"
 # Helm normalizes appVersion quoting when displaying metadata.
 app_version=$(sed -n 's/^appVersion: //p' "$verify_dir/chart.yaml" | tr -d '"')
 test "$app_version" = "$version"
-helm template verify "dist/verified/backrestwatch-$version.tgz" -n backup-monitoring > "$verify_dir/rendered.yaml"
+helm template verify "dist/verified/backrestwatch-$version.tgz" -n backup-monitoring --set accessControl.existingSecret=release-verification-only > "$verify_dir/rendered.yaml"
 test -s "$verify_dir/rendered.yaml"
 printf 'Verified both image platforms and OCI chart %s\n' "$version"
