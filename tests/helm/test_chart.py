@@ -74,6 +74,57 @@ class ChartTests(unittest.TestCase):
                 capture_output=True,
             )
 
+    def test_opt_in_sidecar_ports_and_volumes(self):
+        values = {
+            "extraContainers": [{"name": "tls-proxy", "image": "example.invalid/proxy@sha256:" + "a" * 64, "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": True}]}],
+            "extraVolumes": [{"name": "tls", "secret": {"secretName": "monitor-tls"}}],
+            "service": {"extraPorts": [{"name": "https", "port": 8443, "targetPort": 8443, "protocol": "TCP"}]},
+            "networkPolicy": {"enabled": True, "apiPeers": ["10.0.0.1/32"], "ingressFrom": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "gatus"}}}], "ingressPorts": [8443]},
+        }
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
+            yaml.safe_dump(values, f)
+            f.flush()
+            docs = render("-f", f.name)
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        proxy = next(c for c in pod["containers"] if c["name"] == "tls-proxy")
+        self.assertTrue(proxy["volumeMounts"][0]["readOnly"])
+        self.assertEqual(next(v for v in pod["volumes"] if v["name"] == "tls")["secret"]["secretName"], "monitor-tls")
+        service = next(d for d in docs if d["kind"] == "Service")
+        self.assertEqual(next(p for p in service["spec"]["ports"] if p["name"] == "https")["targetPort"], 8443)
+        policy = next(d for d in docs if d["kind"] == "NetworkPolicy")
+        self.assertEqual(policy["spec"]["ingress"][0]["ports"], [{"port": 8443, "protocol": "TCP"}])
+
+    def test_isolated_service_account_token_only_in_main_container(self):
+        docs = render("--set", "serviceAccount.isolateToken=true", "--set", "extraContainers[0].name=proxy", "--set", "extraContainers[0].image=proxy")
+        pod = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        self.assertFalse(pod["automountServiceAccountToken"])
+        app, proxy = pod["containers"]
+        mount = next(m for m in app["volumeMounts"] if m["name"] == "kubernetes-api-access")
+        self.assertEqual(mount["mountPath"], "/var/run/secrets/kubernetes.io/serviceaccount")
+        self.assertTrue(mount["readOnly"])
+        self.assertFalse(proxy.get("volumeMounts"))
+        sources = next(v for v in pod["volumes"] if v["name"] == "kubernetes-api-access")["projected"]["sources"]
+        self.assertEqual(sources[0]["serviceAccountToken"]["path"], "token")
+        self.assertEqual(sources[1]["configMap"]["name"], "kube-root-ca.crt")
+        self.assertEqual(sources[2]["downwardAPI"]["items"][0]["fieldRef"]["fieldPath"], "metadata.namespace")
+        default_pod = next(d for d in render() if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+        self.assertTrue(default_pod["automountServiceAccountToken"])
+
+    def test_network_policy_rejects_invalid_ingress_ports(self):
+        base = {"networkPolicy": {"enabled": True, "apiPeers": ["10.0.0.1/32"], "ingressFrom": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "gatus"}}}]}}
+        for ports in (None, [], [0], [65536], [-1], ["8443"], [1.5]):
+            base["networkPolicy"]["ingressPorts"] = ports
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
+                yaml.safe_dump(base, f)
+                f.flush()
+                command = [HELM, "template", "watch", str(CHART), "--set", "accessControl.existingSecret=fixture-auth", "-f", f.name]
+                result = subprocess.run(command, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0, repr(ports))
+                if ports is None or ports == []:
+                    guarded = subprocess.run(command + ["--skip-schema-validation"], capture_output=True, text=True)
+                    self.assertNotEqual(guarded.returncode, 0, repr(ports))
+                    self.assertIn("networkPolicy.ingressPorts", guarded.stderr)
+
     def test_explicit_access_control_required(self):
         result = subprocess.run([HELM, "template", "watch", str(CHART)], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)

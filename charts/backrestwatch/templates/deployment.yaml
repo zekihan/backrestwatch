@@ -24,7 +24,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: {{ include "backrestwatch.serviceAccount" . }}
-      automountServiceAccountToken: true
+      automountServiceAccountToken: {{ not .Values.serviceAccount.isolateToken }}
       terminationGracePeriodSeconds: 30
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
@@ -51,6 +51,11 @@ spec:
           readinessProbe:
             {{- toYaml .Values.probes.readiness | nindent 12 }}
           volumeMounts:
+            {{- if .Values.serviceAccount.isolateToken }}
+            - name: kubernetes-api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+            {{- end }}
             - name: config
               mountPath: /config
               readOnly: true
@@ -59,7 +64,29 @@ spec:
             - name: backup-auth
               mountPath: /var/run/backrestwatch-auth
               readOnly: true
+        {{- with .Values.extraContainers }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       volumes:
+        {{- if .Values.serviceAccount.isolateToken }}
+        - name: kubernetes-api-access
+          projected:
+            defaultMode: 0444
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+              - downwardAPI:
+                  items:
+                    - path: namespace
+                      fieldRef:
+                        fieldPath: metadata.namespace
+        {{- end }}
         - name: config
           configMap:
             name: {{ include "backrestwatch.fullname" . }}
@@ -73,6 +100,9 @@ spec:
             items:
               - key: {{ .Values.accessControl.secretKey | quote }}
                 path: token
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
