@@ -179,3 +179,32 @@ func TestConcurrentRefreshAndReports(t *testing.T) {
 	})
 	wg.Wait()
 }
+
+func TestCachedCompletionFailsClosedDuringClockRollback(t *testing.T) {
+	cluster := testCluster(t)
+	completed := testNow.Add(-5 * time.Second)
+	for i := range cluster.Status.PGBackRest.ScheduledBackups {
+		cluster.Status.PGBackRest.ScheduledBackups[i].CompletionTime = completed.Format(time.RFC3339Nano)
+	}
+	results, ledger := evaluate(t, kube.Sample{Clusters: []kube.Cluster{cluster}}, nil, testNow)
+	m := New(testConfig(), nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Collection started before the successful completion was observed. A wall
+	// clock rollback can make that completion future while the sample is fresh.
+	m.results, m.ledger = results, ledger
+	m.sampled, m.evaluated, m.error = testNow.Add(-10*time.Second), testNow, ""
+	rollback := completed.Add(-time.Second)
+	if code, payload := m.Report("db/db/repo1", rollback); code != 503 {
+		t.Errorf("future cached completion reported healthy: %d %+v", code, payload)
+	}
+	if code, payload := m.Report("", rollback); code != 503 || payload.(Report).Repositories["db/db/repo1"].Healthy {
+		t.Errorf("aggregate accepted future cached completion: %d %+v", code, payload)
+	}
+	// Reporting must preserve the validated checkpoint and recover when wall
+	// time catches up, without another API collection or evidence rewrite.
+	if !m.ledger["db/db/repo1"].LastSuccess.Equal(completed) || !m.results["db/db/repo1"].Healthy {
+		t.Fatal("rollback report mutated retained evidence")
+	}
+	if code, payload := m.Report("", testNow); code != 200 {
+		t.Fatalf("clock catch-up did not restore health: %d %+v", code, payload)
+	}
+}
