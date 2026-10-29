@@ -324,6 +324,7 @@ func evaluateRepository(sample kube.Sample, cluster kube.Cluster, repo string, c
 			continue
 		}
 		if completed.Before(birth) {
+			invalid = true
 			continue
 		}
 		accept(cron.Status.LastSuccessfulTime, "CronJob lastSuccessfulTime")

@@ -315,3 +315,39 @@ func TestMalformedSampleRejected(t *testing.T) {
 		t.Fatal("duplicate sample accepted")
 	}
 }
+
+func TestCronCompletionBeforeCreationFailsClosed(t *testing.T) {
+	const key = "db/db/repo2"
+	for _, retained := range []bool{false, true} {
+		t.Run(fmt.Sprintf("retained=%t", retained), func(t *testing.T) {
+			cluster := testCluster(t)
+			var old evidence.Ledger
+			if retained {
+				_, old = evaluate(t, kube.Sample{Clusters: []kube.Cluster{cluster}}, nil, testNow)
+			}
+			// Keep a valid live aggregate as well: invalid eligible CronJob
+			// evidence must fail closed even if another source is fresh.
+			cron := testCron(t)
+			birth := testNow.Add(-time.Hour)
+			cron.Metadata.CreationTimestamp = birth.Format(time.RFC3339Nano)
+			cron.Status.LastSuccessfulTime = birth.Add(-time.Nanosecond).Format(time.RFC3339Nano)
+			sample := kube.Sample{Clusters: []kube.Cluster{cluster}, CronJobs: []kube.CronJob{cron}}
+			results, next := evaluate(t, sample, old, testNow)
+			if results[key].Healthy || results[key].Reason != "Invalid successful backup completion timestamp" {
+				t.Fatal("completion before CronJob creation did not fail closed", results[key])
+			}
+			if !next[key].LastSuccess.Equal(old[key].LastSuccess) || next[key].Source != old[key].Source {
+				t.Fatal("invalid sample changed validated evidence", next[key], old[key])
+			}
+			if !results["db/db/repo1"].Healthy {
+				t.Fatal("invalid CronJob affected another repository", results)
+			}
+			// Creation equality is valid, and correcting the source restores health.
+			sample.CronJobs[0].Status.LastSuccessfulTime = birth.Format(time.RFC3339Nano)
+			results, next = evaluate(t, sample, next, testNow)
+			if !results[key].Healthy || !next[key].LastSuccess.Equal(birth) || results[key].Source != "CronJob lastSuccessfulTime" {
+				t.Fatal("valid creation boundary did not recover", results[key], next[key])
+			}
+		})
+	}
+}
