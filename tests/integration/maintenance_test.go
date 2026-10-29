@@ -63,6 +63,37 @@ func TestOfflineMaintenanceCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Run("case variants cannot hide saved success", func(t *testing.T) {
+		successState := filepath.Join(dir, "success.json")
+		entry := entries["old/old/repo1"]
+		entry.LastSuccess, entry.Source = now.Add(-30*time.Minute), "Completed Job"
+		doc, err := json.Marshal(map[string]any{"version": 2, "entries": evidence.Ledger{"old/old/repo1": entry}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// encoding/json accepts these spellings when recovering evidence.
+		text := strings.ReplaceAll(string(doc), `"lastSuccess"`, `"LASTSUCCESS"`)
+		text = strings.ReplaceAll(text, `"source"`, `"SOURCE"`)
+		if err := os.WriteFile(successState, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+		runCheck(successState, true)
+		successBackup, successOutput := filepath.Join(dir, "success-before.json"), filepath.Join(dir, "success-candidate.json")
+		command := exec.CommandContext(t.Context(), "python3", "../../scripts/stage_checkpoint_retirement.py", "--checkpoint", successState, "--config", configPath, "--backup", successBackup, "--output", successOutput, "--retire", "old/old/repo1")
+		if output, err := command.CombinedOutput(); err == nil || !strings.Contains(string(output), "no saved success") {
+			t.Fatalf("saved success was not rejected: %v %s", err, output)
+		}
+		for _, path := range []string{successBackup, successOutput} {
+			if _, err := os.Stat(path); !os.IsNotExist(err) {
+				t.Fatalf("rejected retirement created %s: %v", path, err)
+			}
+		}
+		unchanged, err := os.ReadFile(successState)
+		if err != nil || string(unchanged) != text {
+			t.Fatal("rejected retirement changed checkpoint", err)
+		}
+	})
+
 	script, err := filepath.Abs("../../scripts/stage_checkpoint_retirement.py")
 	if err != nil {
 		t.Fatal(err)

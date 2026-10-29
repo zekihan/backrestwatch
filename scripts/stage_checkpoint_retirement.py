@@ -43,8 +43,10 @@ def stage(checkpoint, config, backup, output, retired):
         for key in retired:
             if key in active or key not in doc["entries"]:
                 raise ValueError("cannot retire an active or unknown repository")
-            entry = doc["entries"][key]
-            if entry.get("source") or entry.get("lastSuccess") not in (None, "0001-01-01T00:00:00Z"):
+            # Go's checkpoint decoder accepts case-insensitive field names.
+            # Inspect the same fields without changing the retained JSON.
+            entry = {name.casefold(): value for name, value in doc["entries"][key].items()}
+            if entry.get("source") or entry.get("lastsuccess") not in (None, "0001-01-01T00:00:00Z"):
                 raise ValueError("retirement is limited to records with no saved success")
         for key in retired:
             del doc["entries"][key]
