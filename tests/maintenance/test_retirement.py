@@ -50,6 +50,20 @@ class RetirementTests(unittest.TestCase):
             self.stage(["old/old/repo1"])
         self.assertFalse(self.output.exists())
 
+    def test_case_variants_cannot_hide_saved_success(self):
+        for success, source in (("LastSuccess", "Source"), ("LASTSUCCESS", "SOURCE"), ("LaſtSucceſſ", "ſource")):
+            with self.subTest(success=success, source=source):
+                entry = self.doc["entries"]["old/old/repo1"]
+                entry.clear()
+                entry.update({"uid": "retired", success: "2026-10-25T01:00:00Z", source: "Completed Job"})
+                self.checkpoint.write_text(json.dumps(self.doc))
+                original = self.checkpoint.read_bytes()
+                with self.assertRaisesRegex(ValueError, "no saved success"):
+                    self.stage(["old/old/repo1"])
+                self.assertEqual(self.checkpoint.read_bytes(), original)
+                self.assertFalse(self.backup.exists())
+                self.assertFalse(self.output.exists())
+
     def test_active_writer_and_existing_outputs_are_never_overwritten(self):
         with open(str(self.checkpoint) + ".lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
