@@ -180,6 +180,12 @@ func (m *Monitor) Report(key string, now time.Time) (int, any) {
 				result.Healthy, result.Reason = false, "Last successful backup exceeds maximum age"
 			}
 		}
+		// Parsed completion timestamps use wall time. The sample age may still
+		// be positive after a clock rollback (including via Go's monotonic
+		// clock), so check the cached completion against wall time as well.
+		if result.LastSuccess != nil && result.LastSuccess.After(now) {
+			result.Healthy, result.Reason = false, "Invalid successful backup completion timestamp"
+		}
 		if report.Reason != "" {
 			result.Healthy, result.Reason = false, report.Reason
 		}
