@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -13,6 +14,62 @@ import (
 	"github.com/zekihan/backrestwatch/internal/evidence"
 	"github.com/zekihan/backrestwatch/internal/kube"
 )
+
+func TestReportSnapshotSurvivesRefresh(t *testing.T) {
+	api := &fakeAPI{sample: kube.Sample{Clusters: []kube.Cluster{testCluster(t)}}}
+	m, store := newTestMonitor(t, api, filepath.Join(t.TempDir(), "evidence.json"))
+	defer store.Close()
+	m.results, m.ledger = evaluate(t, api.sample, nil, testNow)
+	m.sampled, m.evaluated, m.error = testNow, testNow, ""
+	code, payload := m.Report("", testNow)
+	if code != 200 {
+		t.Fatal(code, payload)
+	}
+	before, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// HTTP encodes the returned payload after Report releases its read lock.
+	// Publish another sample before encoding that same payload again.
+	m.Refresh(t.Context())
+	if !m.sampled.After(testNow) {
+		t.Fatal("refresh did not publish a newer sample")
+	}
+	after, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("refresh changed an already returned report:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+func TestReportOwnsReturnedTimestamps(t *testing.T) {
+	for _, key := range []string{"", "db/db/repo1"} {
+		t.Run("key="+key, func(t *testing.T) {
+			m := New(testConfig(), nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			m.results, m.ledger = evaluate(t, kube.Sample{Clusters: []kube.Cluster{testCluster(t)}}, nil, testNow)
+			m.sampled, m.evaluated, m.error = testNow, testNow, ""
+			_, payload := m.Report(key, testNow)
+			var result Result
+			if key == "" {
+				report := payload.(Report)
+				*report.SampledAt = testNow.Add(-time.Hour)
+				result = report.Repositories["db/db/repo1"]
+			} else {
+				result = payload.(Result)
+			}
+			*result.LastSuccess = testNow.Add(time.Hour)
+			*result.AgeSeconds = 0
+			if code, next := m.Report("", testNow); code != 200 {
+				t.Fatalf("mutating returned timestamps corrupted cached health: %d %+v", code, next)
+			}
+			if !m.sampled.Equal(testNow) || !m.results["db/db/repo1"].LastSuccess.Equal(m.ledger["db/db/repo1"].LastSuccess) || *m.results["db/db/repo1"].AgeSeconds != 7*3600 {
+				t.Fatal("returned timestamp or age aliases cached state")
+			}
+		})
+	}
+}
 
 type fakeAPI struct {
 	sample kube.Sample

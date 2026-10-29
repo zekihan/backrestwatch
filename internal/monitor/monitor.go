@@ -157,9 +157,12 @@ func (m *Monitor) Report(key string, now time.Time) (int, any) {
 			return http.StatusNotFound, Result{Reason: "Unknown backup repository"}
 		}
 	}
-	report := Report{Scope: "backup completion metadata freshness", SampledAt: &m.sampled}
-	if m.sampled.IsZero() {
-		report.SampledAt = nil
+	report := Report{Scope: "backup completion metadata freshness"}
+	if !m.sampled.IsZero() {
+		// HTTP encoding happens after this method releases the lock. Returned
+		// timestamps must belong to the report, not the mutable cached sample.
+		sampled := m.sampled
+		report.SampledAt = &sampled
 	}
 	elapsed := now.Sub(m.sampled).Seconds()
 	ageElapsed := now.Sub(m.evaluated).Seconds()
@@ -173,6 +176,10 @@ func (m *Monitor) Report(key string, now time.Time) (int, any) {
 	}
 	results := make(map[string]Result, len(m.results))
 	for name, result := range m.results {
+		if result.LastSuccess != nil {
+			completed := *result.LastSuccess
+			result.LastSuccess = &completed
+		}
 		if result.AgeSeconds != nil {
 			age := *result.AgeSeconds + ageElapsed
 			result.AgeSeconds = &age
