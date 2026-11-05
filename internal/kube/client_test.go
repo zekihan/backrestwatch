@@ -214,15 +214,29 @@ func TestOversizedPageIsNotRetried(t *testing.T) {
 }
 
 func TestCanceledBodyReadIsNotRetried(t *testing.T) {
+	flushed := make(chan struct{})
 	client, _ := tlsClient(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"metadata":`))
 		w.(http.Flusher).Flush()
+		close(flushed)
 		<-r.Context().Done()
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	go func() { <-flushed; cancel() }()
 	data, retry, err := client.request(ctx, "/apis/"+ClusterAPI+"/postgresclusters", url.Values{})
 	if err == nil || retry || data != nil {
 		t.Fatal("canceled response was accepted or marked retryable", data, retry, err)
+	}
+}
+
+func TestTruncatedChunkedPage(t *testing.T) {
+	client, _ := tlsClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"metadata":`))
+		w.(http.Flusher).Flush()
+	})
+	sample, err := client.Collect(t.Context())
+	if err == nil || len(sample.Clusters) != 0 {
+		t.Fatal("truncated chunked page accepted", sample, err)
 	}
 }

@@ -153,6 +153,9 @@ func (c *Client) request(ctx context.Context, path string, query url.Values) ([]
 		return nil, retry, fmt.Errorf("kubernetes GET %s returned HTTP %d", path, response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, 16*1024*1024+1))
+	if ctx.Err() != nil {
+		return nil, false, fmt.Errorf("kubernetes list page read cancelled for %s", path)
+	}
 	if len(data) > 16*1024*1024 {
 		return nil, false, fmt.Errorf("kubernetes list page exceeds read budget for %s", path)
 	}
