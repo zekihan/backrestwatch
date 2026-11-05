@@ -25,5 +25,3 @@ release:
     owner: zekihan
     name: backrestwatch
   ids: [all]
-  extra_files:
-    - glob: release-assets/backrestwatch-*.tgz

@@ -251,3 +251,5 @@ checks. See [compatibility and provenance](docs/compatibility.md).
 AGPL-3.0, following the standalone Hornkeeper convention. The original Apache-2.0
 monitor contract and behavioral fixtures are attributed in [NOTICE](NOTICE), with
 the source licence preserved in [LICENSES](LICENSES/Apache-2.0.txt).
+
+Publishing and manual recovery: [Publishing](docs/publishing.md).
