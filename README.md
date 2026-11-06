@@ -218,7 +218,7 @@ operator approval. No live credentials or network settings were changed.
 
 ## development and releases
 
-Requires Go 1.27.1, golangci-lint 2.14.0, Helm 4.3.0, Docker, GoReleaser 2.18.2,
+Requires the Go version in `go.mod` and the tool versions pinned in `.github/workflows/pr.yaml`, Docker,
 and Python with `tests/helm/requirements.txt`.
 
 ```sh
