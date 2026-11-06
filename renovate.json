@@ -16,6 +16,16 @@
       ],
       "pinDigests": true,
       "automerge": false
+    },
+    {
+      "description": "Keep action version inputs as release tags",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "matchDepTypes": [
+        "uses-with"
+      ],
+      "pinDigests": false
     }
   ]
 }

@@ -71,8 +71,14 @@ jobs:
         config = json.loads(next(ROOT.glob("renovate.json*")).read_text())
         rules = [rule for rule in config["packageRules"] if "github-actions" in rule.get("matchManagers", [])]
         self.assertTrue(rules)
-        self.assertTrue(rules[-1]["pinDigests"])
-        self.assertFalse(rules[-1]["automerge"])
+        for dep_type, pin_digests in (("action", True), ("workflow", True), ("uses-with", False)):
+            with self.subTest(dep_type=dep_type):
+                settings = {}
+                for rule in rules:
+                    if dep_type in rule.get("matchDepTypes", [dep_type]):
+                        settings.update(rule)
+                self.assertIs(settings.get("pinDigests"), pin_digests)
+                self.assertIs(settings.get("automerge"), False)
 
     def test_version_comments_remain_reviewable(self):
         for path in (ROOT / ".github/workflows").glob("*.y*ml"):
